@@ -38,6 +38,8 @@ const geminiCLIClaudeThoughtSignature = "skip_thought_signature_validator"
 func ConvertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ bool) []byte {
 	rawJSON := bytes.Clone(inputRawJSON)
 	rawJSON = bytes.Replace(rawJSON, []byte(`"url":{"type":"string","format":"uri",`), []byte(`"url":{"type":"string",`), -1)
+	// Remove cache_control fields (Claude-specific, not supported by Gemini)
+	rawJSON = removeCacheControl(rawJSON)
 
 	// system instruction
 	systemInstructionJSON := ""
@@ -207,6 +209,8 @@ func ConvertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 			inputSchemaResult := toolResult.Get("input_schema")
 			if inputSchemaResult.Exists() && inputSchemaResult.IsObject() {
 				inputSchema := inputSchemaResult.Raw
+				// Clean unsupported JSON Schema fields
+				inputSchema = cleanSchemaForGemini(inputSchema)
 				tool, _ := sjson.Delete(toolResult.Raw, "input_schema")
 				tool, _ = sjson.SetRaw(tool, "parametersJsonSchema", inputSchema)
 				tool, _ = sjson.Delete(tool, "strict")
@@ -257,4 +261,108 @@ func ConvertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	outBytes = common.AttachDefaultSafetySettings(outBytes, "request.safetySettings")
 
 	return outBytes
+}
+
+// removeCacheControl removes all cache_control fields from the JSON
+func removeCacheControl(data []byte) []byte {
+	result := gjson.ParseBytes(data)
+	cleaned := removeCacheControlFromValue(result)
+	return []byte(cleaned)
+}
+
+// removeCacheControlFromValue recursively removes cache_control fields
+func removeCacheControlFromValue(value gjson.Result) string {
+	if !value.Exists() {
+		return "{}"
+	}
+
+	if value.IsObject() {
+		obj := value.Map()
+		result := "{"
+		first := true
+		for key, val := range obj {
+			if key == "cache_control" {
+				continue
+			}
+			if !first {
+				result += ","
+			}
+			first = false
+			result += `"` + key + `":`
+			if val.IsObject() || val.IsArray() {
+				result += removeCacheControlFromValue(val)
+			} else {
+				result += val.Raw
+			}
+		}
+		result += "}"
+		return result
+	}
+
+	if value.IsArray() {
+		arr := value.Array()
+		result := "["
+		for i, item := range arr {
+			if i > 0 {
+				result += ","
+			}
+			result += removeCacheControlFromValue(item)
+		}
+		result += "]"
+		return result
+	}
+
+	return value.Raw
+}
+
+// cleanSchemaForGemini removes JSON Schema fields that Gemini API doesn't support
+func cleanSchemaForGemini(schema string) string {
+	result := gjson.Parse(schema)
+	cleaned := removeUnsupportedFields(result)
+	return cleaned
+}
+
+// removeUnsupportedFields recursively removes unsupported JSON Schema fields
+func removeUnsupportedFields(value gjson.Result) string {
+	if !value.Exists() {
+		return "{}"
+	}
+
+	if value.IsObject() {
+		obj := value.Map()
+		result := "{"
+		first := true
+		for key, val := range obj {
+			if key == "multipleOf" {
+				continue
+			}
+			if !first {
+				result += ","
+			}
+			first = false
+			result += `"` + key + `":`
+			if val.IsObject() || val.IsArray() {
+				result += removeUnsupportedFields(val)
+			} else {
+				result += val.Raw
+			}
+		}
+		result += "}"
+		return result
+	}
+
+	if value.IsArray() {
+		arr := value.Array()
+		result := "["
+		for i, item := range arr {
+			if i > 0 {
+				result += ","
+			}
+			result += removeUnsupportedFields(item)
+		}
+		result += "]"
+		return result
+	}
+
+	return value.Raw
 }

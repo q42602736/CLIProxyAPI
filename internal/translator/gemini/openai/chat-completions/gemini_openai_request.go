@@ -328,6 +328,11 @@ func ConvertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 						} else {
 							fnRaw = renamed
 						}
+						// Clean unsupported JSON Schema fields
+						if schemaResult := gjson.Get(fnRaw, "parametersJsonSchema"); schemaResult.Exists() {
+							cleaned := cleanSchemaForGemini(schemaResult.Raw)
+							fnRaw, _ = sjson.SetRaw(fnRaw, "parametersJsonSchema", cleaned)
+						}
 					} else {
 						var errSet error
 						fnRaw, errSet = sjson.Set(fnRaw, "parametersJsonSchema.type", "object")
@@ -378,3 +383,57 @@ func ConvertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 
 // itoa converts int to string without strconv import for few usages.
 func itoa(i int) string { return fmt.Sprintf("%d", i) }
+
+// cleanSchemaForGemini removes JSON Schema fields that Gemini API doesn't support
+func cleanSchemaForGemini(schema string) string {
+	// Remove multipleOf field recursively
+	result := gjson.Parse(schema)
+	cleaned := removeUnsupportedFields(result)
+	return cleaned
+}
+
+// removeUnsupportedFields recursively removes unsupported JSON Schema fields
+func removeUnsupportedFields(value gjson.Result) string {
+	if !value.Exists() {
+		return "{}"
+	}
+
+	if value.IsObject() {
+		obj := value.Map()
+		result := "{"
+		first := true
+		for key, val := range obj {
+			// Skip unsupported fields
+			if key == "multipleOf" {
+				continue
+			}
+			if !first {
+				result += ","
+			}
+			first = false
+			result += fmt.Sprintf(`"%s":`, key)
+			if val.IsObject() || val.IsArray() {
+				result += removeUnsupportedFields(val)
+			} else {
+				result += val.Raw
+			}
+		}
+		result += "}"
+		return result
+	}
+
+	if value.IsArray() {
+		arr := value.Array()
+		result := "["
+		for i, item := range arr {
+			if i > 0 {
+				result += ","
+			}
+			result += removeUnsupportedFields(item)
+		}
+		result += "]"
+		return result
+	}
+
+	return value.Raw
+}
