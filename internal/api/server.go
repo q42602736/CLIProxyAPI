@@ -575,7 +575,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/auth-files", s.mgmt.ListAuthFiles)
 		mgmt.GET("/auth-files/models", s.mgmt.GetAuthFileModels)
 		mgmt.GET("/auth-files/download", s.mgmt.DownloadAuthFile)
+		mgmt.GET("/antigravity-quotas", s.mgmt.GetAntigravityQuotas)
 		mgmt.POST("/auth-files", s.mgmt.UploadAuthFile)
+		mgmt.PATCH("/auth-files", s.mgmt.UpdateAuthFile)
 		mgmt.DELETE("/auth-files", s.mgmt.DeleteAuthFile)
 		mgmt.POST("/vertex/import", s.mgmt.ImportVertexCredential)
 
@@ -603,7 +605,7 @@ func (s *Server) managementAvailabilityMiddleware() gin.HandlerFunc {
 
 func (s *Server) serveManagementControlPanel(c *gin.Context) {
 	cfg := s.cfg
-	if cfg == nil || cfg.RemoteManagement.DisableControlPanel {
+	if cfg == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -615,7 +617,10 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 
 	if _, err := os.Stat(filePath); err != nil {
 		if os.IsNotExist(err) {
-			go managementasset.EnsureLatestManagementHTML(context.Background(), managementasset.StaticDir(s.configFilePath), cfg.ProxyURL, cfg.RemoteManagement.PanelGitHubRepository)
+			// Only auto-download if control panel is not disabled
+			if !cfg.RemoteManagement.DisableControlPanel {
+				go managementasset.EnsureLatestManagementHTML(context.Background(), managementasset.StaticDir(s.configFilePath), cfg.ProxyURL, cfg.RemoteManagement.PanelGitHubRepository)
+			}
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}

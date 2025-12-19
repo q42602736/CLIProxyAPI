@@ -362,6 +362,7 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	if name == "" {
 		name = auth.ID
 	}
+
 	entry := gin.H{
 		"id":             auth.ID,
 		"auth_index":     auth.Index,
@@ -369,6 +370,7 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 		"type":           strings.TrimSpace(auth.Provider),
 		"provider":       strings.TrimSpace(auth.Provider),
 		"label":          auth.Label,
+		"priority":       auth.Priority,
 		"status":         auth.Status,
 		"status_message": auth.StatusMessage,
 		"disabled":       auth.Disabled,
@@ -540,6 +542,67 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"status": "ok"})
+}
+
+// UpdateAuthFile updates auth file properties like priority
+func (h *Handler) UpdateAuthFile(c *gin.Context) {
+	if h.authManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
+		return
+	}
+	ctx := c.Request.Context()
+
+	// Get auth file name from query parameter
+	name := c.Query("name")
+	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+		c.JSON(400, gin.H{"error": "invalid name"})
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(name), ".json") {
+		c.JSON(400, gin.H{"error": "name must end with .json"})
+		return
+	}
+
+	// Parse request body
+	var updateReq struct {
+		Priority *int `json:"priority"`
+	}
+	if err := c.ShouldBindJSON(&updateReq); err != nil {
+		c.JSON(400, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	// Find the auth by filename
+	authID := h.authIDForPath(filepath.Join(h.cfg.AuthDir, name))
+	if authID == "" {
+		authID = name
+	}
+
+	auth, ok := h.authManager.GetByID(authID)
+	if !ok {
+		c.JSON(404, gin.H{"error": "auth not found"})
+		return
+	}
+
+	// Update priority if provided
+	if updateReq.Priority != nil {
+		auth.Priority = *updateReq.Priority
+
+		// Update metadata to persist priority
+		if auth.Metadata == nil {
+			auth.Metadata = make(map[string]any)
+		}
+		auth.Metadata["priority"] = *updateReq.Priority
+
+		// Save to auth manager (this will also persist to file via manager.persist())
+		_, err := h.authManager.Update(ctx, auth)
+		if err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("failed to update auth: %v", err)})
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{"status": "ok", "priority": auth.Priority})
 }
 
 // Delete auth files: single by name or all

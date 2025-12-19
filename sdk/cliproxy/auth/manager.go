@@ -207,12 +207,34 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 	if auth == nil || auth.ID == "" {
 		return nil, nil
 	}
+
 	m.mu.Lock()
 	if existing, ok := m.auths[auth.ID]; ok && existing != nil && !auth.indexAssigned && auth.Index == 0 {
 		auth.Index = existing.Index
 		auth.indexAssigned = existing.indexAssigned
 	}
 	auth.EnsureIndex()
+
+	// Sync Priority field to Metadata before persisting
+	if auth.Metadata == nil {
+		auth.Metadata = make(map[string]any)
+	}
+	if auth.Priority != 0 {
+		auth.Metadata["priority"] = auth.Priority
+	} else {
+		// If Priority is 0, check if we should restore it from Metadata
+		if metaPriority, ok := auth.Metadata["priority"]; ok {
+			switch v := metaPriority.(type) {
+			case float64:
+				auth.Priority = int(v)
+			case int:
+				auth.Priority = v
+			case int64:
+				auth.Priority = int(v)
+			}
+		}
+	}
+
 	m.auths[auth.ID] = auth.Clone()
 	m.mu.Unlock()
 	_ = m.persist(ctx, auth)

@@ -27,7 +27,7 @@ const (
 	defaultManagementReleaseURL = "https://api.github.com/repos/router-for-me/Cli-Proxy-API-Management-Center/releases/latest"
 	managementAssetName         = "management.html"
 	httpUserAgent               = "CLIProxyAPI-management-updater"
-	updateCheckInterval         = 3 * time.Hour
+	updateCheckInterval         = 876000 * time.Hour // 100 年，实际上禁用自动更新
 )
 
 // ManagementFileName exposes the control panel asset filename.

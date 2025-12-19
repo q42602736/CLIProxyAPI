@@ -98,7 +98,10 @@ func (e *modelCooldownError) Headers() http.Header {
 	return headers
 }
 
-// Pick selects the next available auth for the provider in a round-robin manner.
+// Pick selects the next available auth for the provider with priority support.
+// Auths with higher Priority values are selected first. Within the same priority level,
+// round-robin selection is used. If all high-priority auths are unavailable, it falls back
+// to lower priority levels automatically.
 func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	_ = ctx
 	_ = opts
@@ -108,15 +111,19 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 	if s.cursors == nil {
 		s.cursors = make(map[string]int)
 	}
-	available := make([]*Auth, 0, len(auths))
+
 	now := time.Now()
 	cooldownCount := 0
 	var earliest time.Time
+
+	// Group auths by priority and filter out blocked ones
+	priorityGroups := make(map[int][]*Auth)
 	for i := 0; i < len(auths); i++ {
 		candidate := auths[i]
 		blocked, reason, next := isAuthBlockedForModel(candidate, model, now)
 		if !blocked {
-			available = append(available, candidate)
+			priority := candidate.Priority
+			priorityGroups[priority] = append(priorityGroups[priority], candidate)
 			continue
 		}
 		if reason == blockReasonCooldown {
@@ -126,7 +133,8 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 			}
 		}
 	}
-	if len(available) == 0 {
+
+	if len(priorityGroups) == 0 {
 		if cooldownCount == len(auths) && !earliest.IsZero() {
 			resetIn := earliest.Sub(now)
 			if resetIn < 0 {
@@ -136,11 +144,24 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 		}
 		return nil, &Error{Code: "auth_unavailable", Message: "no auth available"}
 	}
+
+	// Find the highest priority level with available auths
+	priorities := make([]int, 0, len(priorityGroups))
+	for priority := range priorityGroups {
+		priorities = append(priorities, priority)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(priorities)))
+
+	highestPriority := priorities[0]
+	available := priorityGroups[highestPriority]
+
 	// Make round-robin deterministic even if caller's candidate order is unstable.
 	if len(available) > 1 {
 		sort.Slice(available, func(i, j int) bool { return available[i].ID < available[j].ID })
 	}
-	key := provider + ":" + model
+
+	// Use separate cursor for each priority level to maintain independent round-robin
+	key := fmt.Sprintf("%s:%s:p%d", provider, model, highestPriority)
 	s.mu.Lock()
 	index := s.cursors[key]
 
@@ -150,7 +171,7 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 
 	s.cursors[key] = index + 1
 	s.mu.Unlock()
-	// log.Debugf("available: %d, index: %d, key: %d", len(available), index, index%len(available))
+	// log.Debugf("available: %d, index: %d, key: %d, priority: %d", len(available), index, index%len(available), highestPriority)
 	return available[index%len(available)], nil
 }
 

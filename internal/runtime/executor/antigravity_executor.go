@@ -1337,3 +1337,113 @@ func antigravityMinThinkingBudget(model string) int {
 	}
 	return -1
 }
+
+// antigravityModelNameMap maps internal model IDs to user-friendly display names
+// Only models in this map will be shown in the quota display
+var antigravityModelNameMap = map[string]string{
+	"rev19-uic3-1p":              "gemini-2.5-computer-use-preview-10-2025",
+	"gemini-3-pro-image":         "gemini-3-pro-image-preview",
+	"gemini-3-pro-high":          "gemini-3-pro-preview",
+	"gemini-3-flash":             "gemini-3-flash-preview",
+	"gemini-2.5-flash":           "gemini-2.5-flash",
+	"claude-sonnet-4-5":          "gemini-claude-sonnet-4-5",
+	"claude-sonnet-4-5-thinking": "gemini-claude-sonnet-4-5-thinking",
+	"claude-opus-4-5-thinking":   "gemini-claude-opus-4-5-thinking",
+}
+
+// GetQuotas fetches quota information for all available models from Antigravity API.
+// Returns a map of model names to their quota information.
+// Only models defined in antigravityModelNameMap will be included in the result.
+func (e *AntigravityExecutor) GetQuotas(ctx context.Context, auth *cliproxyauth.Auth) (map[string]interface{}, error) {
+	token, updatedAuth, err := e.ensureAccessToken(ctx, auth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get access token: %w", err)
+	}
+	if updatedAuth != nil {
+		auth = updatedAuth
+	}
+
+	baseURLs := antigravityBaseURLFallbackOrder(auth)
+	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+
+	for idx, baseURL := range baseURLs {
+		modelsURL := baseURL + antigravityModelsPath
+		reqBody := []byte("{}")
+
+		req, errReq := http.NewRequestWithContext(ctx, http.MethodPost, modelsURL, bytes.NewReader(reqBody))
+		if errReq != nil {
+			return nil, fmt.Errorf("failed to create request: %w", errReq)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("User-Agent", defaultAntigravityAgent)
+
+		resp, errDo := httpClient.Do(req)
+		if errDo != nil {
+			if idx+1 < len(baseURLs) {
+				log.Debugf("antigravity quota: network error on %s, trying next base url", baseURL)
+				continue
+			}
+			return nil, fmt.Errorf("failed to fetch quotas: %w", errDo)
+		}
+
+		bodyBytes, errRead := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if errRead != nil {
+			return nil, fmt.Errorf("failed to read response: %w", errRead)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			if idx+1 < len(baseURLs) {
+				log.Debugf("antigravity quota: rate limited on %s, trying next base url", baseURL)
+				continue
+			}
+			return nil, fmt.Errorf("rate limited on all base URLs")
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		// Parse response and extract quota information
+		result := gjson.ParseBytes(bodyBytes)
+		modelsData := result.Get("models")
+		if !modelsData.Exists() {
+			return nil, fmt.Errorf("no models data in response")
+		}
+
+		quotas := make(map[string]interface{})
+		modelsData.ForEach(func(modelID, modelData gjson.Result) bool {
+			internalModelID := modelID.String()
+
+			// Check if this model is in our supported models map
+			displayName, isSupported := antigravityModelNameMap[internalModelID]
+			if !isSupported {
+				// Skip unsupported models (like chat_20706, chat_23310, etc.)
+				return true
+			}
+
+			// Extract quota info
+			quotaInfo := modelData.Get("quotaInfo")
+			if quotaInfo.Exists() {
+				remaining := quotaInfo.Get("remainingFraction").Float()
+				if remaining == 0 {
+					remaining = quotaInfo.Get("remaining").Float()
+				}
+				resetTime := quotaInfo.Get("resetTime").String()
+
+				// Use the display name as the key
+				quotas[displayName] = map[string]interface{}{
+					"remaining":  remaining,
+					"resetTime":  resetTime,
+				}
+			}
+			return true
+		})
+
+		return quotas, nil
+	}
+
+	return nil, fmt.Errorf("failed to fetch quotas from all base URLs")
+}

@@ -183,11 +183,26 @@ func (s *FileTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth,
 		return nil, fmt.Errorf("stat file: %w", err)
 	}
 	id := s.idFor(path, baseDir)
+
+	// Extract priority from metadata (default to 0 if not present)
+	priority := 0
+	if priorityVal, ok := metadata["priority"]; ok {
+		switch v := priorityVal.(type) {
+		case float64:
+			priority = int(v)
+		case int:
+			priority = v
+		case int64:
+			priority = int(v)
+		}
+	}
+
 	auth := &cliproxyauth.Auth{
 		ID:               id,
 		Provider:         provider,
 		FileName:         id,
 		Label:            s.labelFor(metadata),
+		Priority:         priority,
 		Status:           cliproxyauth.StatusActive,
 		Attributes:       map[string]string{"path": path},
 		Metadata:         metadata,
