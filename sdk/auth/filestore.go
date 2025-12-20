@@ -197,13 +197,33 @@ func (s *FileTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth,
 		}
 	}
 
+	// Extract disabled from metadata (default to false if not present)
+	disabled := false
+	if disabledVal, ok := metadata["disabled"]; ok {
+		switch v := disabledVal.(type) {
+		case bool:
+			disabled = v
+		case string:
+			disabled = v == "true" || v == "1"
+		}
+	}
+
+	status := cliproxyauth.StatusActive
+	statusMessage := ""
+	if disabled {
+		status = cliproxyauth.StatusDisabled
+		statusMessage = "disabled via management API"
+	}
+
 	auth := &cliproxyauth.Auth{
 		ID:               id,
 		Provider:         provider,
 		FileName:         id,
 		Label:            s.labelFor(metadata),
 		Priority:         priority,
-		Status:           cliproxyauth.StatusActive,
+		Status:           status,
+		StatusMessage:    statusMessage,
+		Disabled:         disabled,
 		Attributes:       map[string]string{"path": path},
 		Metadata:         metadata,
 		CreatedAt:        info.ModTime(),

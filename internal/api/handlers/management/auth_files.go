@@ -611,6 +611,12 @@ func (h *Handler) UpdateAuthFile(c *gin.Context) {
 			auth.StatusMessage = ""
 		}
 		auth.UpdatedAt = time.Now()
+
+		// Update metadata to persist disabled state
+		if auth.Metadata == nil {
+			auth.Metadata = make(map[string]any)
+		}
+		auth.Metadata["disabled"] = *updateReq.Disabled
 		needUpdate = true
 	}
 
