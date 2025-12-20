@@ -110,7 +110,7 @@ var __yieldStar = (value) => {
 };
 var __forAwait = (obj, it, method) => (it = obj[__knownSymbol("asyncIterator")]) ? it.call(obj) : (obj = obj[__knownSymbol("iterator")](), it = {}, method = (key, fn) => (fn = obj[key]) && (it[key] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it);
 var require_index_001 = __commonJS({
-  "index-DycN0IkJ.js"(exports) {
+  "index-DZpJc3D9.js"(exports) {
     var _Aa;
     (function polyfill() {
       const relList = document.createElement("link").relList;
@@ -22019,6 +22019,8 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
       deleteAll: () => apiClient.delete("/auth-files", { params: { all: true } }),
       // 更新认证文件优先级
       updatePriority: (name2, priority) => apiClient.patch(`/auth-files?name=${encodeURIComponent(name2)}`, { priority }),
+      // 更新认证文件启用/禁用状态
+      updateDisabled: (name2, disabled) => apiClient.patch(`/auth-files?name=${encodeURIComponent(name2)}`, { disabled }),
       // OAuth 排除模型
       getOauthExcludedModels() {
         return __async(this, null, function* () {
@@ -23362,7 +23364,7 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
     const container$6 = "AiProvidersPage-module__container___y-jfS";
     const pageTitle$6 = "AiProvidersPage-module__pageTitle___DoSv8";
     const content$5 = "AiProvidersPage-module__content___E2Czu";
-    const cardStats$1 = "AiProvidersPage-module__cardStats___rELY1";
+    const cardStats = "AiProvidersPage-module__cardStats___rELY1";
     const statPill$1 = "AiProvidersPage-module__statPill___d812A";
     const statSuccess$1 = "AiProvidersPage-module__statSuccess___5dRtj";
     const statFailure$1 = "AiProvidersPage-module__statFailure___krDjY";
@@ -23404,7 +23406,7 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
       container: container$6,
       pageTitle: pageTitle$6,
       content: content$5,
-      cardStats: cardStats$1,
+      cardStats,
       statPill: statPill$1,
       statSuccess: statSuccess$1,
       statFailure: statFailure$1,
@@ -25330,14 +25332,15 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
     const statsInfo = "AuthFilesPage-module__statsInfo___ALHH7";
     const fileGrid = "AuthFilesPage-module__fileGrid___ajvi5";
     const fileCard = "AuthFilesPage-module__fileCard___j9Jtq";
+    const fileCardDisabled = "AuthFilesPage-module__fileCardDisabled___hbSbQ";
     const cardHeader = "AuthFilesPage-module__cardHeader___uJMtL";
     const typeBadge = "AuthFilesPage-module__typeBadge___Dtm6A";
     const fileName = "AuthFilesPage-module__fileName___DZ39s";
+    const enableSwitch = "AuthFilesPage-module__enableSwitch___bqSHO";
     const cardMeta = "AuthFilesPage-module__cardMeta___H6kAQ";
     const priorityWrapper = "AuthFilesPage-module__priorityWrapper___AiPqt";
     const priorityInput = "AuthFilesPage-module__priorityInput___nK62G";
     const priorityConfirmBtn = "AuthFilesPage-module__priorityConfirmBtn___9jbyA";
-    const cardStats = "AuthFilesPage-module__cardStats___JQ4ig";
     const statPill = "AuthFilesPage-module__statPill___wFsBu";
     const statSuccess = "AuthFilesPage-module__statSuccess___mh8iR";
     const statFailure = "AuthFilesPage-module__statFailure___ivDGu";
@@ -25394,14 +25397,15 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
       statsInfo,
       fileGrid,
       fileCard,
+      fileCardDisabled,
       cardHeader,
       typeBadge,
       fileName,
+      enableSwitch,
       cardMeta,
       priorityWrapper,
       priorityInput,
       priorityConfirmBtn,
-      cardStats,
       statPill,
       statSuccess,
       statFailure,
@@ -25783,6 +25787,27 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
       const getPriorityValue = (name2, filePriority) => {
         return priorityInputs[name2] !== void 0 ? priorityInputs[name2] : filePriority || 0;
       };
+      const handleToggleDisabled = (name2, currentDisabled) => __async(null, null, function* () {
+        const newDisabled = !currentDisabled;
+        try {
+          yield authFilesApi.updateDisabled(name2, newDisabled);
+          setFiles(
+            (prev) => prev.map(
+              (file) => file.name === name2 ? __spreadProps(__spreadValues({}, file), { disabled: newDisabled }) : file
+            )
+          );
+          showNotification(
+            newDisabled ? t2("auth_files.disabled_success", { defaultValue: "已禁用认证文件" }) : t2("auth_files.enabled_success", { defaultValue: "已启用认证文件" }),
+            "success"
+          );
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : "";
+          showNotification(
+            `${t2("auth_files.toggle_failed", { defaultValue: "切换状态失败" })}: ${errorMessage}`,
+            "error"
+          );
+        }
+      });
       const handleDelete = (name2) => __async(null, null, function* () {
         if (!window.confirm(`${t2("auth_files.delete_confirm")} "${name2}" ?`)) return;
         setDeleting(name2);
@@ -25984,7 +26009,7 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
         const fileStats = resolveAuthFileStats(item, keyStats);
         const isRuntimeOnly = isRuntimeOnlyAuthFile(item);
         const typeColor = getTypeColor(item.type || "unknown");
-        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.fileCard, children: [
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${styles$5.fileCard} ${item.disabled ? styles$5.fileCardDisabled : ""}`, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.cardHeader, children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               "span",
@@ -25997,7 +26022,15 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
                 children: getTypeLabel(item.type || "unknown")
               }
             ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.fileName, children: item.name })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.fileName, children: item.name }),
+            !isRuntimeOnly && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.enableSwitch, title: item.disabled ? t2("auth_files.click_to_enable", { defaultValue: "点击启用" }) : t2("auth_files.click_to_disable", { defaultValue: "点击禁用" }), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+              ToggleSwitch,
+              {
+                checked: !item.disabled,
+                onChange: () => handleToggleDisabled(item.name, !!item.disabled),
+                disabled: disableControls
+              }
+            ) })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.cardMeta, children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
@@ -26030,13 +26063,11 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
                   className: styles$5.priorityConfirmBtn,
                   onClick: () => handlePriorityChange(item.name, getPriorityValue(item.name, item.priority)),
                   disabled: disableControls || priorityInputs[item.name] === void 0,
-                  title: "确认",
-                  children: "✓"
+                  title: t2("common.confirm", { defaultValue: "确认" }),
+                  children: t2("common.confirm", { defaultValue: "确认" })
                 }
               )
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.cardStats, children: [
+            ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `${styles$5.statPill} ${styles$5.statSuccess}`, children: [
               t2("stats.success"),
               ": ",
@@ -65959,7 +65990,7 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
                 t2("footer.version"),
                 ": ",
-                "v6.6.33-3-g588d8ac"
+                "v6.6.33-9-gfcfefcd"
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
                 t2("footer.build_date"),
@@ -67967,12 +67998,21 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease, opacity 150ms ease;
 }
 .AuthFilesPage-module__fileCard___j9Jtq:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   border-color: rgba(37, 99, 235, 0.2);
+}
+.AuthFilesPage-module__fileCard___j9Jtq.AuthFilesPage-module__fileCardDisabled___hbSbQ {
+  opacity: 0.6;
+  border-color: var(--text-muted);
+  background-color: var(--bg-tertiary);
+}
+.AuthFilesPage-module__fileCard___j9Jtq.AuthFilesPage-module__fileCardDisabled___hbSbQ:hover {
+  transform: none;
+  box-shadow: none;
 }
 
 .AuthFilesPage-module__cardHeader___uJMtL {
@@ -67997,17 +68037,28 @@ body {
   color: var(--text-primary);
   word-break: break-all;
   line-height: 1.4;
+  flex: 1;
+}
+
+.AuthFilesPage-module__enableSwitch___bqSHO {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .AuthFilesPage-module__cardMeta___H6kAQ {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
   color: var(--text-secondary);
   padding: 4px 0;
   border-top: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
+}
+.AuthFilesPage-module__cardMeta___H6kAQ > span {
+  white-space: nowrap;
 }
 
 .AuthFilesPage-module__priorityWrapper___AiPqt {
@@ -68042,24 +68093,22 @@ body {
 }
 
 .AuthFilesPage-module__priorityConfirmBtn___9jbyA {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 8px;
   background-color: var(--primary-color);
   color: white;
-  font-size: 14px;
-  font-weight: bold;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   transition: all 150ms ease;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 .AuthFilesPage-module__priorityConfirmBtn___9jbyA:hover:not(:disabled) {
   background-color: #1d4ed8;
-  transform: scale(1.05);
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 .AuthFilesPage-module__priorityConfirmBtn___9jbyA:active:not(:disabled) {
   transform: scale(0.95);

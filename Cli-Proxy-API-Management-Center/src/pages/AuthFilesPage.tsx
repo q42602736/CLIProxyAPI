@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconBot, IconDownload, IconInfo, IconTrash2 } from '@/components/ui/icons';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
 import { authFilesApi, usageApi } from '@/services/api';
 import { apiClient } from '@/services/api/client';
@@ -497,6 +498,32 @@ export function AuthFilesPage() {
     return priorityInputs[name] !== undefined ? priorityInputs[name] : (filePriority || 0);
   };
 
+  // 切换启用/禁用状态
+  const handleToggleDisabled = async (name: string, currentDisabled: boolean) => {
+    const newDisabled = !currentDisabled;
+    try {
+      await authFilesApi.updateDisabled(name, newDisabled);
+      // 更新本地状态
+      setFiles((prev) =>
+        prev.map((file) =>
+          file.name === name ? { ...file, disabled: newDisabled } : file
+        )
+      );
+      showNotification(
+        newDisabled
+          ? t('auth_files.disabled_success', { defaultValue: '已禁用认证文件' })
+          : t('auth_files.enabled_success', { defaultValue: '已启用认证文件' }),
+        'success'
+      );
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : '';
+      showNotification(
+        `${t('auth_files.toggle_failed', { defaultValue: '切换状态失败' })}: ${errorMessage}`,
+        'error'
+      );
+    }
+  };
+
   // 删除单个文件
   const handleDelete = async (name: string) => {
     if (!window.confirm(`${t('auth_files.delete_confirm')} "${name}" ?`)) return;
@@ -742,7 +769,7 @@ export function AuthFilesPage() {
     const typeColor = getTypeColor(item.type || 'unknown');
 
     return (
-      <div key={item.name} className={styles.fileCard}>
+      <div key={item.name} className={`${styles.fileCard} ${item.disabled ? styles.fileCardDisabled : ''}`}>
         <div className={styles.cardHeader}>
           <span
             className={styles.typeBadge}
@@ -755,6 +782,15 @@ export function AuthFilesPage() {
             {getTypeLabel(item.type || 'unknown')}
           </span>
           <span className={styles.fileName}>{item.name}</span>
+          {!isRuntimeOnly && (
+            <div className={styles.enableSwitch} title={item.disabled ? t('auth_files.click_to_enable', { defaultValue: '点击启用' }) : t('auth_files.click_to_disable', { defaultValue: '点击禁用' })}>
+              <ToggleSwitch
+                checked={!item.disabled}
+                onChange={() => handleToggleDisabled(item.name, !!item.disabled)}
+                disabled={disableControls}
+              />
+            </div>
+          )}
         </div>
 
         <div className={styles.cardMeta}>
@@ -774,14 +810,11 @@ export function AuthFilesPage() {
               className={styles.priorityConfirmBtn}
               onClick={() => handlePriorityChange(item.name, getPriorityValue(item.name, item.priority))}
               disabled={disableControls || priorityInputs[item.name] === undefined}
-              title="确认"
+              title={t('common.confirm', { defaultValue: '确认' })}
             >
-              ✓
+              {t('common.confirm', { defaultValue: '确认' })}
             </button>
           </span>
-        </div>
-
-        <div className={styles.cardStats}>
           <span className={`${styles.statPill} ${styles.statSuccess}`}>
             {t('stats.success')}: {fileStats.success}
           </span>

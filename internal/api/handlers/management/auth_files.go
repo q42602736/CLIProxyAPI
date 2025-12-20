@@ -566,7 +566,8 @@ func (h *Handler) UpdateAuthFile(c *gin.Context) {
 
 	// Parse request body
 	var updateReq struct {
-		Priority *int `json:"priority"`
+		Priority *int  `json:"priority"`
+		Disabled *bool `json:"disabled"`
 	}
 	if err := c.ShouldBindJSON(&updateReq); err != nil {
 		c.JSON(400, gin.H{"error": "invalid request body"})
@@ -585,6 +586,8 @@ func (h *Handler) UpdateAuthFile(c *gin.Context) {
 		return
 	}
 
+	needUpdate := false
+
 	// Update priority if provided
 	if updateReq.Priority != nil {
 		auth.Priority = *updateReq.Priority
@@ -594,8 +597,25 @@ func (h *Handler) UpdateAuthFile(c *gin.Context) {
 			auth.Metadata = make(map[string]any)
 		}
 		auth.Metadata["priority"] = *updateReq.Priority
+		needUpdate = true
+	}
 
-		// Save to auth manager (this will also persist to file via manager.persist())
+	// Update disabled if provided
+	if updateReq.Disabled != nil {
+		auth.Disabled = *updateReq.Disabled
+		if *updateReq.Disabled {
+			auth.Status = coreauth.StatusDisabled
+			auth.StatusMessage = "disabled via management API"
+		} else {
+			auth.Status = coreauth.StatusActive
+			auth.StatusMessage = ""
+		}
+		auth.UpdatedAt = time.Now()
+		needUpdate = true
+	}
+
+	// Save to auth manager if any changes
+	if needUpdate {
 		_, err := h.authManager.Update(ctx, auth)
 		if err != nil {
 			c.JSON(500, gin.H{"error": fmt.Sprintf("failed to update auth: %v", err)})
@@ -603,7 +623,7 @@ func (h *Handler) UpdateAuthFile(c *gin.Context) {
 		}
 	}
 
-	c.JSON(200, gin.H{"status": "ok", "priority": auth.Priority})
+	c.JSON(200, gin.H{"status": "ok", "priority": auth.Priority, "disabled": auth.Disabled})
 }
 
 // Delete auth files: single by name or all

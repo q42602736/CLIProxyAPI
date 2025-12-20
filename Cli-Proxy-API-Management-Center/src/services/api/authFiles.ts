@@ -22,6 +22,10 @@ export const authFilesApi = {
   updatePriority: (name: string, priority: number) =>
     apiClient.patch(`/auth-files?name=${encodeURIComponent(name)}`, { priority }),
 
+  // 更新认证文件启用/禁用状态
+  updateDisabled: (name: string, disabled: boolean) =>
+    apiClient.patch(`/auth-files?name=${encodeURIComponent(name)}`, { disabled }),
+
   // OAuth 排除模型
   async getOauthExcludedModels(): Promise<Record<string, string[]>> {
     const data = await apiClient.get('/oauth-excluded-models');
