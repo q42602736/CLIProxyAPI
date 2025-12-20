@@ -192,6 +192,9 @@ func (e *KiroExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 	// Parse Kiro response and convert to Claude format
 	claudeResp := e.parseKiroResponse(data, req.Model)
 
+	// Record successful request
+	reporter.ensurePublished(ctx)
+
 	var param any
 	out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, claudeResp, &param)
 	resp = cliproxyexecutor.Response{Payload: []byte(out)}
@@ -497,6 +500,9 @@ processStream:
 		for _, chunk := range stopChunks {
 			out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
 		}
+
+		// Record successful request
+		reporter.ensurePublished(ctx)
 	}()
 
 	return stream, nil
