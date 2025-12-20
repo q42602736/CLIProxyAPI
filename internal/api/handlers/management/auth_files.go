@@ -2419,9 +2419,8 @@ func (h *Handler) GetKiroUsageLimits(c *gin.Context) {
 				return
 			}
 			fmt.Println("[Kiro Usage] Token refreshed, retrying...")
-			// Update the auth file with new token
-			authFilePath := filepath.Join(h.cfg.AuthDir, authID)
-			if saveErr := kiroAuthSvc.SaveTokens(authFilePath, newTokenData); saveErr != nil {
+			// Update the auth file with new token - SaveTokens expects directory path, not file path
+			if saveErr := kiroAuthSvc.SaveTokens(h.cfg.AuthDir, newTokenData); saveErr != nil {
 				fmt.Printf("[Kiro Usage] Failed to save refreshed token: %v\n", saveErr)
 			}
 			// Retry with new token
