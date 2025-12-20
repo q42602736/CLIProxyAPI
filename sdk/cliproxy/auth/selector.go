@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 )
 
@@ -121,6 +123,8 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 	for i := 0; i < len(auths); i++ {
 		candidate := auths[i]
 		blocked, reason, next := isAuthBlockedForModel(candidate, model, now)
+		log.Debugf("[Selector] Auth %s (provider=%s, disabled=%v, status=%s): blocked=%v, reason=%d, next=%v",
+			candidate.ID, candidate.Provider, candidate.Disabled, candidate.Status, blocked, reason, next)
 		if !blocked {
 			priority := candidate.Priority
 			priorityGroups[priority] = append(priorityGroups[priority], candidate)
@@ -133,6 +137,9 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 			}
 		}
 	}
+
+	log.Debugf("[Selector] Provider=%s, Model=%s, Total auths=%d, Priority groups=%d, Cooldown count=%d",
+		provider, model, len(auths), len(priorityGroups), cooldownCount)
 
 	if len(priorityGroups) == 0 {
 		if cooldownCount == len(auths) && !earliest.IsZero() {

@@ -23,6 +23,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/auth/codex"
 	geminiAuth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/gemini"
 	iflowauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/iflow"
+	kiroauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/kiro"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/auth/qwen"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
@@ -646,11 +647,18 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
-	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
+	if name == "" {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}
-	full := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
+	// Support both root files and subdirectory files (e.g., uploads/kiro-upload-xxx.json)
+	cleanName := filepath.Clean(name)
+	// Prevent path traversal (no .. allowed)
+	if strings.Contains(cleanName, "..") {
+		c.JSON(400, gin.H{"error": "invalid path"})
+		return
+	}
+	full := filepath.Join(h.cfg.AuthDir, cleanName)
 	if !filepath.IsAbs(full) {
 		if abs, errAbs := filepath.Abs(full); errAbs == nil {
 			full = abs
@@ -2263,4 +2271,250 @@ func (h *Handler) GetAuthStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "wait"})
+}
+
+func (h *Handler) RequestKiroCredential(c *gin.Context) {
+	var payload struct {
+		CredPath string `json:"cred_path"`
+	}
+	_ = c.ShouldBindJSON(&payload)
+
+	credPath := strings.TrimSpace(payload.CredPath)
+
+	kiroAuthSvc := kiroauth.NewKiroAuth(h.cfg)
+	tokenData, errLoad := kiroAuthSvc.LoadCredentialsFromDirectory(credPath)
+	if errLoad != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": errLoad.Error()})
+		return
+	}
+
+	if tokenData == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "no valid Kiro credentials found in AWS SSO cache"})
+		return
+	}
+
+	tokenStorage := &kiroauth.KiroTokenStorage{
+		Type:         "kiro",
+		AccessToken:  tokenData.AccessToken,
+		RefreshToken: tokenData.RefreshToken,
+		ClientID:     tokenData.ClientID,
+		ClientSecret: tokenData.ClientSecret,
+		AuthMethod:   tokenData.AuthMethod,
+		ExpiresAt:    tokenData.ExpiresAt,
+		ProfileArn:   tokenData.ProfileArn,
+		Region:       tokenData.Region,
+		LastRefresh:  time.Now().Format(time.RFC3339),
+	}
+
+	region := tokenData.Region
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	timestamp := time.Now().Unix()
+	fileName := fmt.Sprintf("kiro-%s-%d.json", region, timestamp)
+
+	record := &coreauth.Auth{
+		ID:       fileName,
+		Provider: "kiro",
+		FileName: fileName,
+		Storage:  tokenStorage,
+		Metadata: map[string]any{
+			"type":         "kiro",
+			"region":       region,
+			"auth_method":  tokenData.AuthMethod,
+			"profile_arn":  tokenData.ProfileArn,
+			"expires_at":   tokenData.ExpiresAt,
+			"last_refresh": tokenStorage.LastRefresh,
+		},
+		Attributes: map[string]string{
+			"region": region,
+		},
+	}
+
+	savedPath, errSave := h.saveTokenRecord(context.Background(), record)
+	if errSave != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "failed to save Kiro credentials"})
+		return
+	}
+
+	fmt.Printf("Kiro credential load successful. Token saved to %s\n", savedPath)
+	c.JSON(http.StatusOK, gin.H{
+		"status":     "ok",
+		"saved_path": savedPath,
+		"region":     region,
+		"type":       "kiro",
+	})
+}
+
+func (h *Handler) GetKiroUsageLimits(c *gin.Context) {
+	ctx := context.Background()
+
+	authID := c.Query("auth_id")
+	if authID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "auth_id is required"})
+		return
+	}
+
+	// Find the auth file
+	authFilePath := filepath.Join(h.cfg.AuthDir, authID)
+	data, err := os.ReadFile(authFilePath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "auth file not found"})
+		return
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid auth file"})
+		return
+	}
+
+	// Extract token data (support both camelCase and snake_case field names)
+	tokenData := &kiroauth.KiroTokenData{
+		AccessToken:  getStringFromMapMulti(metadata, "accessToken", "access_token"),
+		RefreshToken: getStringFromMapMulti(metadata, "refreshToken", "refresh_token"),
+		ClientID:     getStringFromMapMulti(metadata, "clientId", "client_id"),
+		ClientSecret: getStringFromMapMulti(metadata, "clientSecret", "client_secret"),
+		AuthMethod:   getStringFromMapMulti(metadata, "authMethod", "auth_method"),
+		ProfileArn:   getStringFromMapMulti(metadata, "profileArn", "profile_arn"),
+		Region:       getStringFromMap(metadata, "region"),
+	}
+
+	if tokenData.AccessToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "access token not found in auth file"})
+		return
+	}
+
+	kiroAuthSvc := kiroauth.NewKiroAuth(h.cfg)
+	usageLimits, err := kiroAuthSvc.GetUsageLimits(ctx, tokenData)
+	if err != nil {
+		// If 403 error, try to refresh token and retry
+		if strings.Contains(err.Error(), "403") && tokenData.RefreshToken != "" {
+			fmt.Println("[Kiro Usage] Received 403, attempting token refresh...")
+			newTokenData, refreshErr := kiroAuthSvc.RefreshTokens(ctx, tokenData)
+			if refreshErr != nil {
+				fmt.Printf("[Kiro Usage] Token refresh failed: %v\n", refreshErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+				return
+			}
+			fmt.Println("[Kiro Usage] Token refreshed, retrying...")
+			// Update the auth file with new token
+			authFilePath := filepath.Join(h.cfg.AuthDir, authID)
+			if saveErr := kiroAuthSvc.SaveTokens(authFilePath, newTokenData); saveErr != nil {
+				fmt.Printf("[Kiro Usage] Failed to save refreshed token: %v\n", saveErr)
+			}
+			// Retry with new token
+			usageLimits, err = kiroAuthSvc.GetUsageLimits(ctx, newTokenData)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+				return
+			}
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ok",
+		"usage":  usageLimits,
+	})
+}
+
+func getStringFromMap(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func getStringFromMapMulti(m map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := m[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (h *Handler) UploadOAuthCredentials(c *gin.Context) {
+	provider := c.PostForm("provider")
+	if provider == "" {
+		provider = "kiro"
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "file is required"})
+		return
+	}
+
+	// Validate file extension
+	if !strings.HasSuffix(strings.ToLower(file.Filename), ".json") {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "only JSON files are supported"})
+		return
+	}
+
+	// Validate file size (5MB limit)
+	if file.Size > 5*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "file size must be less than 5MB"})
+		return
+	}
+
+	// Ensure auth directory exists
+	if err := os.MkdirAll(h.cfg.AuthDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "failed to create auth directory"})
+		return
+	}
+
+	// Read and parse the uploaded file
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "failed to open uploaded file"})
+		return
+	}
+	defer src.Close()
+
+	fileData, err := io.ReadAll(src)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "failed to read uploaded file"})
+		return
+	}
+
+	// Parse JSON and inject type field
+	var jsonData map[string]any
+	if err := json.Unmarshal(fileData, &jsonData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid JSON file"})
+		return
+	}
+
+	// Inject type field if not present
+	if _, ok := jsonData["type"]; !ok {
+		jsonData["type"] = provider
+	}
+
+	// Re-serialize with type field
+	modifiedData, err := json.MarshalIndent(jsonData, "", "  ")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "failed to process file"})
+		return
+	}
+
+	// Generate unique filename and save directly to auth directory
+	timestamp := time.Now().Unix()
+	fileName := fmt.Sprintf("%s-upload-%d.json", provider, timestamp)
+	filePath := filepath.Join(h.cfg.AuthDir, fileName)
+
+	// Save the modified file
+	if err := os.WriteFile(filePath, modifiedData, 0644); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "failed to save file"})
+		return
+	}
+
+	fmt.Printf("OAuth credential file uploaded: %s\n", filePath)
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "ok",
+		"file_path": filePath,
+	})
 }

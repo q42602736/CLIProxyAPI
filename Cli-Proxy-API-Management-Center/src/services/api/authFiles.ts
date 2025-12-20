@@ -45,5 +45,50 @@ export const authFilesApi = {
   async getAntigravityQuotas(): Promise<Record<string, Record<string, { remaining: number; resetTime: string }>>> {
     const data = await apiClient.get('/antigravity-quotas');
     return data?.quotas || {};
+  },
+
+  // 获取 Kiro 认证文件的用量信息
+  async getKiroUsageLimits(authId: string): Promise<{
+    usageBreakdownList?: Array<{
+      resourceType?: string;
+      displayName?: string;
+      unit?: string;
+      currentUsage?: number;
+      currentUsageWithPrecision?: number;
+      usageLimit?: number;
+      usageLimitWithPrecision?: number;
+      nextDateReset?: number;
+      freeTrialInfo?: {
+        freeTrialStatus?: string;
+        currentUsage?: number;
+        currentUsageWithPrecision?: number;
+        usageLimit?: number;
+        usageLimitWithPrecision?: number;
+        freeTrialExpiry?: number;
+      };
+      bonuses?: Array<{
+        bonusCode?: string;
+        displayName?: string;
+        description?: string;
+        status?: string;
+        currentUsage?: number;
+        usageLimit?: number;
+        redeemedAt?: number;
+        expiresAt?: number;
+      }>;
+    }>;
+    userInfo?: {
+      email?: string;
+      userId?: string;
+    };
+    daysUntilReset?: number;
+    nextDateReset?: number;
+  } | null> {
+    try {
+      const data = await apiClient.get('/kiro-usage-limits', { params: { auth_id: authId } });
+      return data?.usage || null;
+    } catch {
+      return null;
+    }
   }
 };

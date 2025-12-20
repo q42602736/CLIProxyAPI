@@ -52,6 +52,10 @@ const TYPE_COLORS: Record<string, TypeColorSet> = {
     light: { bg: '#f3e5f5', text: '#7b1fa2' },
     dark: { bg: '#4a148c', text: '#ce93d8' }
   },
+  kiro: {
+    light: { bg: '#fff8e1', text: '#ff8f00' },
+    dark: { bg: '#ff6f00', text: '#ffe082' }
+  },
   empty: {
     light: { bg: '#f5f5f5', text: '#616161' },
     dark: { bg: '#424242', text: '#bdbdbd' }
@@ -169,6 +173,42 @@ export function AuthFilesPage() {
   const [deletingAll, setDeletingAll] = useState(false);
   const [keyStats, setKeyStats] = useState<KeyStats>({ bySource: {}, byAuthIndex: {} });
   const [antigravityQuotas, setAntigravityQuotas] = useState<Record<string, Record<string, { remaining: number; resetTime: string }>>>({});
+  const [kiroUsageLimits, setKiroUsageLimits] = useState<Record<string, {
+    usageBreakdownList?: Array<{
+      resourceType?: string;
+      displayName?: string;
+      unit?: string;
+      currentUsage?: number;
+      currentUsageWithPrecision?: number;
+      usageLimit?: number;
+      usageLimitWithPrecision?: number;
+      nextDateReset?: number;
+      freeTrialInfo?: {
+        freeTrialStatus?: string;
+        currentUsage?: number;
+        currentUsageWithPrecision?: number;
+        usageLimit?: number;
+        usageLimitWithPrecision?: number;
+        freeTrialExpiry?: number;
+      };
+      bonuses?: Array<{
+        bonusCode?: string;
+        displayName?: string;
+        description?: string;
+        status?: string;
+        currentUsage?: number;
+        usageLimit?: number;
+        redeemedAt?: number;
+        expiresAt?: number;
+      }>;
+    }>;
+    userInfo?: {
+      email?: string;
+      userId?: string;
+    };
+    daysUntilReset?: number;
+    nextDateReset?: number;
+  }>>({});
   const [quotaRefreshInterval, setQuotaRefreshInterval] = useState(() => {
     // 从 localStorage 读取保存的配额刷新间隔，默认1分钟
     const saved = localStorage.getItem('quotaRefreshInterval');
@@ -248,6 +288,25 @@ export function AuthFilesPage() {
     }
   }, []);
 
+  // 加载 Kiro 用量限制
+  const loadKiroUsageLimits = useCallback(async (fileList: AuthFileItem[]) => {
+    const kiroFiles = fileList.filter((f) => f.type === 'kiro');
+    if (kiroFiles.length === 0) return;
+
+    const newLimits: Record<string, typeof kiroUsageLimits[string]> = {};
+    for (const file of kiroFiles) {
+      try {
+        const usage = await authFilesApi.getKiroUsageLimits(file.name);
+        if (usage) {
+          newLimits[file.name] = usage;
+        }
+      } catch {
+        // 静默失败
+      }
+    }
+    setKiroUsageLimits(newLimits);
+  }, []);
+
   // 加载 OAuth 排除列表
   const loadExcluded = useCallback(async () => {
     try {
@@ -288,6 +347,12 @@ export function AuthFilesPage() {
     // 设置自动刷新配额信息（使用可配置的间隔时间，单位：分钟）
     const quotaRefreshIntervalId = setInterval(() => {
       loadAntigravityQuotas();
+      // 同时刷新 Kiro 用量（需要最新的文件列表）
+      authFilesApi.list().then((data) => {
+        if (data?.files) {
+          loadKiroUsageLimits(data.files);
+        }
+      }).catch(() => {});
     }, quotaRefreshInterval * 60 * 1000); // 转换为毫秒
 
     // 设置每秒更新当前时间，用于实时刷新倒计时显示
@@ -301,6 +366,13 @@ export function AuthFilesPage() {
       clearInterval(timeUpdateIntervalId);
     };
   }, [loadFiles, loadKeyStats, loadExcluded, loadAntigravityQuotas, quotaRefreshInterval]);
+
+  // 当文件列表变化时加载 Kiro 用量
+  useEffect(() => {
+    if (files.length > 0) {
+      loadKiroUsageLimits(files);
+    }
+  }, [files, loadKiroUsageLimits]);
 
   // 提取所有存在的类型
   const existingTypes = useMemo(() => {
@@ -745,6 +817,107 @@ export function AuthFilesPage() {
                       {resetCountdown}
                     </div>
                   )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Kiro 用量显示 */}
+        {item.type === 'kiro' && kiroUsageLimits[item.name] && (
+          <div className={styles.quotaInfo}>
+            <div className={styles.quotaTitle}>
+              用量限制 {kiroUsageLimits[item.name].userInfo?.email && `(${kiroUsageLimits[item.name].userInfo?.email})`}
+            </div>
+            {kiroUsageLimits[item.name].usageBreakdownList?.map((breakdown, idx) => {
+              // 基础额度
+              const baseUsed = breakdown.currentUsageWithPrecision ?? breakdown.currentUsage ?? 0;
+              const baseTotal = breakdown.usageLimitWithPrecision ?? breakdown.usageLimit ?? 0;
+              // 免费试用额度
+              const trialUsed = breakdown.freeTrialInfo?.currentUsageWithPrecision ?? breakdown.freeTrialInfo?.currentUsage ?? 0;
+              const trialTotal = breakdown.freeTrialInfo?.usageLimitWithPrecision ?? breakdown.freeTrialInfo?.usageLimit ?? 0;
+              // 总额度 = 基础 + 免费试用
+              const totalUsed = baseUsed + trialUsed;
+              const totalLimit = baseTotal + trialTotal;
+              const totalUsedPercent = totalLimit > 0 ? Math.min((totalUsed / totalLimit) * 100, 100) : 0;
+              const totalRemainingPercent = 100 - totalUsedPercent;
+              const totalProgressClass = totalRemainingPercent >= 70 ? styles.progressNormal : (totalRemainingPercent >= 30 ? styles.progressWarning : styles.progressDanger);
+              const resetTime = breakdown.nextDateReset ? new Date(breakdown.nextDateReset * 1000).toISOString() : null;
+              const resetCountdown = resetTime ? formatTimeUntilReset(resetTime, currentTime) : null;
+
+              return (
+                <div key={idx} className={styles.quotaItem}>
+                  {/* 总额度显示 */}
+                  <div className={styles.quotaHeader}>
+                    <span className={styles.quotaModel}>📊 {breakdown.displayName || breakdown.resourceType || 'Usage'} (总计)</span>
+                    <span className={styles.quotaValue}>
+                      {totalUsed.toFixed(2)}/{totalLimit}
+                    </span>
+                  </div>
+                  <div className={`${styles.progressBar} ${totalProgressClass}`}>
+                    <div className={styles.progressFill} style={{ width: `${totalRemainingPercent}%` }}></div>
+                  </div>
+                  {resetCountdown && (
+                    <div className={styles.quotaReset}>
+                      {resetCountdown}
+                    </div>
+                  )}
+                  {/* 基础额度明细 */}
+                  {baseTotal > 0 && (
+                    <div className={styles.quotaItem} style={{ marginTop: '8px', paddingLeft: '12px', borderLeft: '2px solid #1890ff' }}>
+                      <div className={styles.quotaHeader}>
+                        <span className={styles.quotaModel} style={{ color: '#1890ff' }}>💎 基础额度</span>
+                        <span className={styles.quotaValue}>
+                          {baseUsed}/{baseTotal}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  {/* 免费试用额度明细 */}
+                  {breakdown.freeTrialInfo && breakdown.freeTrialInfo.freeTrialStatus === 'ACTIVE' && (() => {
+                    const trialExpiry = breakdown.freeTrialInfo.freeTrialExpiry ? formatTimeUntilReset(new Date(breakdown.freeTrialInfo.freeTrialExpiry * 1000).toISOString(), currentTime) : null;
+                    return (
+                      <div className={styles.quotaItem} style={{ marginTop: '8px', paddingLeft: '12px', borderLeft: '2px solid #52c41a' }}>
+                        <div className={styles.quotaHeader}>
+                          <span className={styles.quotaModel} style={{ color: '#52c41a' }}>🎁 免费试用额度</span>
+                          <span className={styles.quotaValue}>
+                            {trialUsed.toFixed(2)}/{trialTotal}
+                          </span>
+                        </div>
+                        {trialExpiry && (
+                          <div className={styles.quotaReset} style={{ fontSize: '11px', color: '#888' }}>
+                            试用到期: {trialExpiry}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {/* 显示奖励额度 */}
+                  {breakdown.bonuses && breakdown.bonuses.length > 0 && breakdown.bonuses.map((bonus, bonusIdx) => {
+                    const bonusUsed = bonus.currentUsage ?? 0;
+                    const bonusTotal = bonus.usageLimit ?? 1;
+                    const bonusUsedPercent = Math.min((bonusUsed / bonusTotal) * 100, 100);
+                    const bonusRemainingPercent = 100 - bonusUsedPercent;
+                    const bonusProgressClass = bonusRemainingPercent >= 70 ? styles.progressNormal : (bonusRemainingPercent >= 30 ? styles.progressWarning : styles.progressDanger);
+                    return (
+                      <div key={`bonus-${bonusIdx}`} className={styles.quotaItem} style={{ marginTop: '8px', paddingLeft: '12px', borderLeft: '2px solid #faad14' }}>
+                        <div className={styles.quotaHeader}>
+                          <span className={styles.quotaModel} style={{ color: '#faad14' }}>🎁 {bonus.displayName || bonus.bonusCode || '赠送额度'}</span>
+                          <span className={styles.quotaValue}>
+                            {bonusUsed}/{bonusTotal}
+                          </span>
+                        </div>
+                        <div className={`${styles.progressBar} ${bonusProgressClass}`}>
+                          <div className={styles.progressFill} style={{ width: `${bonusRemainingPercent}%` }}></div>
+                        </div>
+                        {bonus.description && (
+                          <div className={styles.quotaReset} style={{ fontSize: '11px', color: '#888' }}>
+                            {bonus.description}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
