@@ -460,15 +460,32 @@ processStream:
 			}
 		}
 
-		// Send content_block_stop event
-		blockStopEvent := e.buildClaudeContentBlockStop(0)
-		blockStopChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, blockStopEvent, &param)
-		for _, chunk := range blockStopChunks {
-			out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
+		// 如果还有未关闭的工具调用，关闭它
+		if currentToolUse != nil {
+			blockStopEvent := e.buildClaudeContentBlockStop(blockIndex)
+			blockStopChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, blockStopEvent, &param)
+			for _, chunk := range blockStopChunks {
+				out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
+			}
+			blockIndex++
+			currentToolUse = nil
 		}
 
-		// Send message_delta event
-		deltaEvent := e.buildClaudeMessageDelta("end_turn", 0)
+		// Send content_block_stop event for text block (only if blockIndex is still 0)
+		if blockIndex == 0 {
+			blockStopEvent := e.buildClaudeContentBlockStop(0)
+			blockStopChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, blockStopEvent, &param)
+			for _, chunk := range blockStopChunks {
+				out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
+			}
+		}
+
+		// Send message_delta event with stop_reason based on whether tool was used
+		stopReason := "end_turn"
+		if blockIndex > 0 {
+			stopReason = "tool_use"
+		}
+		deltaEvent := e.buildClaudeMessageDelta(stopReason, 0)
 		deltaChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, deltaEvent, &param)
 		for _, chunk := range deltaChunks {
 			out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
