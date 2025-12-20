@@ -140,7 +140,8 @@ func (e *KiroExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 						return resp, readErr
 					}
 					appendAPIResponseChunk(ctx, e.cfg, dataRetry)
-					claudeRespRetry := e.parseKiroResponse(dataRetry, req.Model)
+					inputTokens := estimateInputTokens(body)
+					claudeRespRetry := e.parseKiroResponse(dataRetry, req.Model, inputTokens)
 					var paramRetry any
 					outRetry := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, claudeRespRetry, &paramRetry)
 					return cliproxyexecutor.Response{Payload: []byte(outRetry)}, nil
@@ -190,7 +191,8 @@ func (e *KiroExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 	appendAPIResponseChunk(ctx, e.cfg, data)
 
 	// Parse Kiro response and convert to Claude format
-	claudeResp := e.parseKiroResponse(data, req.Model)
+	inputTokens := estimateInputTokens(body)
+	claudeResp := e.parseKiroResponse(data, req.Model, inputTokens)
 
 	// Record successful request
 	reporter.ensurePublished(ctx)
@@ -326,8 +328,11 @@ processStream:
 		messageID := uuid.New().String()
 		var param any
 
+		// Calculate input tokens
+		inputTokens := estimateInputTokens(body)
+
 		// Send message_start event
-		startEvent := e.buildClaudeMessageStart(messageID, req.Model)
+		startEvent := e.buildClaudeMessageStart(messageID, req.Model, inputTokens)
 		startChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, startEvent, &param)
 		for _, chunk := range startChunks {
 			out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
@@ -488,7 +493,8 @@ processStream:
 		if blockIndex > 0 {
 			stopReason = "tool_use"
 		}
-		deltaEvent := e.buildClaudeMessageDelta(stopReason, 0)
+		outputTokens := estimateOutputTokens(totalContent.String() + toolInputBuilder.String())
+		deltaEvent := e.buildClaudeMessageDelta(stopReason, outputTokens)
 		deltaChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, deltaEvent, &param)
 		for _, chunk := range deltaChunks {
 			out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
@@ -1151,7 +1157,7 @@ func (e *KiroExecutor) parseKiroStreamEvents(line []byte) []kiroStreamEvent {
 	return events
 }
 
-func (e *KiroExecutor) parseKiroResponse(data []byte, model string) []byte {
+func (e *KiroExecutor) parseKiroResponse(data []byte, model string, inputTokens int) []byte {
 	var fullContent strings.Builder
 
 	// Parse all content from response
@@ -1162,6 +1168,9 @@ func (e *KiroExecutor) parseKiroResponse(data []byte, model string) []byte {
 		}
 	}
 
+	// Calculate output tokens
+	outputTokens := estimateOutputTokens(fullContent.String())
+
 	// Build Claude-compatible response
 	response := map[string]interface{}{
 		"id":            "msg_" + uuid.New().String(),
@@ -1171,8 +1180,8 @@ func (e *KiroExecutor) parseKiroResponse(data []byte, model string) []byte {
 		"stop_reason":   "end_turn",
 		"stop_sequence": nil,
 		"usage": map[string]int{
-			"input_tokens":  0,
-			"output_tokens": 0,
+			"input_tokens":  inputTokens,
+			"output_tokens": outputTokens,
 		},
 		"content": []map[string]interface{}{
 			{
@@ -1186,7 +1195,7 @@ func (e *KiroExecutor) parseKiroResponse(data []byte, model string) []byte {
 	return result
 }
 
-func (e *KiroExecutor) buildClaudeMessageStart(messageID, model string) []byte {
+func (e *KiroExecutor) buildClaudeMessageStart(messageID, model string, inputTokens int) []byte {
 	event := map[string]interface{}{
 		"type": "message_start",
 		"message": map[string]interface{}{
@@ -1195,7 +1204,7 @@ func (e *KiroExecutor) buildClaudeMessageStart(messageID, model string) []byte {
 			"role":  "assistant",
 			"model": model,
 			"usage": map[string]int{
-				"input_tokens":  0,
+				"input_tokens":  inputTokens,
 				"output_tokens": 0,
 			},
 			"content": []interface{}{},
@@ -1285,3 +1294,151 @@ func (e *KiroExecutor) buildClaudeMessageDelta(stopReason string, outputTokens i
 
 // Unused imports placeholder to avoid compile errors
 var _ = sjson.Set
+
+// Token counting functions (ported from AIClient-2-API)
+
+// countTextTokens estimates token count for text using character-based estimation
+// Since Go doesn't have @anthropic-ai/tokenizer, we use character/4 estimation
+func countTextTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	// Approximate: 1 token ≈ 4 characters for English, less for CJK
+	return (len(text) + 3) / 4
+}
+
+// estimateInputTokens calculates input tokens from Claude request body
+func estimateInputTokens(claudeBody []byte) int {
+	totalTokens := 0
+
+	// Base request overhead
+	const baseRequestOverhead = 4
+	totalTokens += baseRequestOverhead
+
+	// Count system prompt tokens
+	system := gjson.GetBytes(claudeBody, "system")
+	if system.Exists() {
+		var systemText string
+		if system.IsArray() {
+			system.ForEach(func(_, value gjson.Result) bool {
+				if value.Get("type").String() == "text" {
+					systemText += value.Get("text").String()
+				}
+				return true
+			})
+		} else {
+			systemText = system.String()
+		}
+		totalTokens += countTextTokens(systemText)
+		totalTokens += 2 // System prompt overhead
+	}
+
+	// Count all messages tokens
+	messages := gjson.GetBytes(claudeBody, "messages")
+	if messages.IsArray() {
+		messages.ForEach(func(_, msg gjson.Result) bool {
+			// Message structure overhead
+			const messageOverhead = 4
+			totalTokens += messageOverhead
+			totalTokens += 1 // role field
+
+			content := msg.Get("content")
+			totalTokens += estimateContentTokens(content)
+			return true
+		})
+	}
+
+	// Count tools definitions tokens
+	tools := gjson.GetBytes(claudeBody, "tools")
+	if tools.IsArray() {
+		toolCount := len(tools.Array())
+
+		// Tool base overhead
+		var baseToolsOverhead, perToolOverhead int
+		if toolCount == 1 {
+			baseToolsOverhead = 0
+			perToolOverhead = 50
+		} else if toolCount <= 5 {
+			baseToolsOverhead = 100
+			perToolOverhead = 30
+		} else {
+			baseToolsOverhead = 180
+			perToolOverhead = 20
+		}
+
+		totalTokens += baseToolsOverhead
+
+		tools.ForEach(func(_, tool gjson.Result) bool {
+			totalTokens += countTextTokens(tool.Get("name").String())
+			totalTokens += countTextTokens(tool.Get("description").String())
+			if tool.Get("input_schema").Exists() {
+				totalTokens += countTextTokens(tool.Get("input_schema").Raw)
+			}
+			totalTokens += perToolOverhead
+			return true
+		})
+	}
+
+	return totalTokens
+}
+
+// estimateContentTokens estimates tokens for message content
+func estimateContentTokens(content gjson.Result) int {
+	const imageTokens = 1500 // Fixed estimate for images
+
+	if !content.Exists() {
+		return 0
+	}
+
+	// String content
+	if content.Type == gjson.String {
+		return countTextTokens(content.String())
+	}
+
+	// Array content
+	if content.IsArray() {
+		totalTokens := 0
+		content.ForEach(func(_, block gjson.Result) bool {
+			blockType := block.Get("type").String()
+			switch blockType {
+			case "text":
+				totalTokens += countTextTokens(block.Get("text").String())
+			case "image", "image_url":
+				totalTokens += imageTokens
+			case "tool_use":
+				totalTokens += 4 // Structure overhead
+				totalTokens += countTextTokens(block.Get("name").String())
+				input := block.Get("input")
+				if input.Exists() {
+					totalTokens += countTextTokens(input.Raw)
+				}
+			case "tool_result":
+				totalTokens += 4 // Structure overhead
+				totalTokens += countTextTokens(block.Get("tool_use_id").String())
+				resultContent := block.Get("content")
+				if resultContent.Exists() {
+					totalTokens += estimateContentTokens(resultContent)
+				}
+			case "thinking":
+				totalTokens += countTextTokens(block.Get("thinking").String())
+			default:
+				// Unknown type, estimate from raw
+				totalTokens += countTextTokens(block.Raw)
+			}
+			return true
+		})
+		return totalTokens
+	}
+
+	// Object content (single block)
+	if content.IsObject() {
+		return countTextTokens(content.Raw)
+	}
+
+	return 0
+}
+
+// estimateOutputTokens estimates output tokens from response content
+func estimateOutputTokens(content string) int {
+	return countTextTokens(content)
+}
