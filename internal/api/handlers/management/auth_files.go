@@ -2419,8 +2419,9 @@ func (h *Handler) GetKiroUsageLimits(c *gin.Context) {
 				return
 			}
 			fmt.Println("[Kiro Usage] Token refreshed, retrying...")
-			// Update the auth file with new token - SaveTokens expects directory path, not file path
-			if saveErr := kiroAuthSvc.SaveTokens(h.cfg.AuthDir, newTokenData); saveErr != nil {
+			// Update the original auth file with new token
+			authFilePath := filepath.Join(h.cfg.AuthDir, authID)
+			if saveErr := updateKiroAuthFile(authFilePath, newTokenData); saveErr != nil {
 				fmt.Printf("[Kiro Usage] Failed to save refreshed token: %v\n", saveErr)
 			}
 			// Retry with new token
@@ -2536,4 +2537,38 @@ func (h *Handler) UploadOAuthCredentials(c *gin.Context) {
 		"status":    "ok",
 		"file_path": filePath,
 	})
+}
+
+// updateKiroAuthFile updates the original Kiro auth file with refreshed token data
+func updateKiroAuthFile(filePath string, tokenData *kiroauth.KiroTokenData) error {
+	// Read existing file
+	existingData := make(map[string]interface{})
+	if data, err := os.ReadFile(filePath); err == nil {
+		if err := json.Unmarshal(data, &existingData); err != nil {
+			return fmt.Errorf("failed to parse existing auth file: %w", err)
+		}
+	} else {
+		return fmt.Errorf("failed to read auth file: %w", err)
+	}
+
+	// Update token fields
+	existingData["accessToken"] = tokenData.AccessToken
+	existingData["refreshToken"] = tokenData.RefreshToken
+	existingData["expiresAt"] = tokenData.ExpiresAt
+	if tokenData.ProfileArn != "" {
+		existingData["profileArn"] = tokenData.ProfileArn
+	}
+
+	// Write back to file
+	jsonData, err := json.MarshalIndent(existingData, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal token data: %w", err)
+	}
+
+	if err := os.WriteFile(filePath, jsonData, 0600); err != nil {
+		return fmt.Errorf("failed to write auth file: %w", err)
+	}
+
+	fmt.Printf("[Kiro Auth] Updated auth file: %s\n", filePath)
+	return nil
 }
