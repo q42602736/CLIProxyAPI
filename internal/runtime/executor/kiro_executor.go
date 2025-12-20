@@ -19,6 +19,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -193,9 +194,14 @@ func (e *KiroExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 	// Parse Kiro response and convert to Claude format
 	inputTokens := estimateInputTokens(body)
 	claudeResp := e.parseKiroResponse(data, req.Model, inputTokens)
+	outputTokens := estimateOutputTokens(string(data))
 
-	// Record successful request
-	reporter.ensurePublished(ctx)
+	// Record successful request with token statistics
+	reporter.publish(ctx, usage.Detail{
+		InputTokens:  int64(inputTokens),
+		OutputTokens: int64(outputTokens),
+		TotalTokens:  int64(inputTokens + outputTokens),
+	})
 
 	var param any
 	out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, claudeResp, &param)
@@ -568,8 +574,12 @@ processStream:
 		sendEvent(stopEvent)
 		log.Infof("[Kiro Stream] All final events sent")
 
-		// Record successful request
-		reporter.ensurePublished(ctx)
+		// Record successful request with token statistics
+		reporter.publish(ctx, usage.Detail{
+			InputTokens:  int64(inputTokens),
+			OutputTokens: int64(outputTokens),
+			TotalTokens:  int64(inputTokens + outputTokens),
+		})
 	}()
 
 	return stream, nil
