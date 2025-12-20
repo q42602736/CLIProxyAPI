@@ -588,6 +588,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/qwen-auth-url", s.mgmt.RequestQwenToken)
 		mgmt.GET("/iflow-auth-url", s.mgmt.RequestIFlowToken)
 		mgmt.POST("/iflow-auth-url", s.mgmt.RequestIFlowCookieToken)
+		mgmt.POST("/kiro-auth-url", s.mgmt.RequestKiroCredential)
+		mgmt.GET("/kiro-usage-limits", s.mgmt.GetKiroUsageLimits)
+		mgmt.POST("/upload-oauth-credentials", s.mgmt.UploadOAuthCredentials)
 		mgmt.POST("/oauth-callback", s.mgmt.PostOAuthCallback)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
 	}

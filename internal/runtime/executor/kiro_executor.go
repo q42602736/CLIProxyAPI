@@ -331,40 +331,86 @@ processStream:
 		// Calculate input tokens
 		inputTokens := estimateInputTokens(body)
 
+		// 辅助函数：发送 SSE 事件
+		// 当 from == to 时直接发送，否则通过 TranslateStream 转换
+		sendEvent := func(event []byte) {
+			// 调试日志：记录发送的 SSE 事件
+			eventStr := string(event)
+			if len(eventStr) > 200 {
+				log.Debugf("[Kiro Stream] Sending SSE event (truncated): %s...", eventStr[:200])
+			} else {
+				log.Debugf("[Kiro Stream] Sending SSE event: %s", eventStr)
+			}
+			
+			if from == to {
+				// 直接发送 SSE 事件（参考 claude_executor 的做法）
+				out <- cliproxyexecutor.StreamChunk{Payload: event}
+			} else {
+				chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, event, &param)
+				for _, chunk := range chunks {
+					out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
+				}
+			}
+		}
+
 		// Send message_start event
 		startEvent := e.buildClaudeMessageStart(messageID, req.Model, inputTokens)
-		startChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, startEvent, &param)
-		for _, chunk := range startChunks {
-			out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-		}
+		sendEvent(startEvent)
 
 		// Send content_block_start event
 		blockStartEvent := e.buildClaudeContentBlockStart(0)
-		blockStartChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, blockStartEvent, &param)
-		for _, chunk := range blockStartChunks {
-			out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-		}
+		sendEvent(blockStartEvent)
 
-		// Read all stream data into buffer and parse events
+		// 照搬 AIClient-2-API 的逻辑：
+		// 1. 实时发送 content 事件
+		// 2. 累积所有工具调用（不实时发送）
+		// 3. 流结束后，统一发送所有工具调用
 		var buffer bytes.Buffer
 		readBuf := make([]byte, 4096)
 		var totalContent strings.Builder
 		var lastContent string // 用于去重连续相同的 content
-		blockIndex := 0
-		var currentToolUse *kiroToolUse
-		var toolInputBuilder strings.Builder
+
+		// 工具调用累积结构
+		type accumulatedToolCall struct {
+			ToolUseId string
+			Name      string
+			Input     strings.Builder
+		}
+		var toolCalls []*accumulatedToolCall
+		var currentToolCall *accumulatedToolCall
+
+		lastLogTime := time.Now()
+		totalBytesReceived := 0
 
 		for {
 			n, readErr := decodedBody.Read(readBuf)
 			if n > 0 {
+				totalBytesReceived += n
 				buffer.Write(readBuf[:n])
-				appendAPIResponseChunk(ctx, e.cfg, readBuf[:n])
+				
+				// 调试日志：记录 Kiro 服务端返回的原始数据
+				rawData := string(readBuf[:n])
+				if len(rawData) > 300 {
+					log.Debugf("[Kiro Stream] Received raw data (truncated, %d bytes): %s...", n, rawData[:300])
+				} else {
+					log.Debugf("[Kiro Stream] Received raw data (%d bytes): %s", n, rawData)
+				}
 
+				appendAPIResponseChunk(ctx, e.cfg, readBuf[:n])
 				// Parse all complete events from buffer
 				bufStr := buffer.String()
 				events, remaining := e.parseKiroStreamBuffer(bufStr)
 				buffer.Reset()
 				buffer.WriteString(remaining)
+				
+				// 调试日志：记录解析出的事件
+				if len(events) > 0 {
+					eventTypes := make([]string, len(events))
+					for i, ev := range events {
+						eventTypes[i] = ev.Type
+					}
+					log.Debugf("[Kiro Stream] Parsed %d events: %v, remaining_len=%d", len(events), eventTypes, len(remaining))
+				}
 
 				for _, event := range events {
 					if event.Type == "content" && event.Content != "" {
@@ -374,138 +420,153 @@ processStream:
 						}
 						lastContent = event.Content
 						totalContent.WriteString(event.Content)
-						deltaEvent := e.buildClaudeContentBlockDelta(blockIndex, event.Content)
-						deltaChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, deltaEvent, &param)
-						for _, chunk := range deltaChunks {
-							out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-						}
+						// 实时发送 content delta
+						deltaEvent := e.buildClaudeContentBlockDelta(0, event.Content)
+						sendEvent(deltaEvent)
 					} else if event.Type == "toolUse" && event.ToolUse != nil {
-						// 照搬 AIClient-2-API 的逻辑：toolUse 事件可能带有 input
-						if currentToolUse == nil {
-							// 新的工具调用开始
-							// Send content_block_stop for previous text block if any
-							if blockIndex == 0 && totalContent.Len() > 0 {
-								blockStopEvent := e.buildClaudeContentBlockStop(blockIndex)
-								blockStopChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, blockStopEvent, &param)
-								for _, chunk := range blockStopChunks {
-									out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
+						// 累积工具调用，不实时发送
+						tc := event.ToolUse
+						log.Debugf("[Kiro Stream] Received toolUse: name=%s, id=%s, input_len=%d, stop=%v, input=%q",
+							tc.Name, tc.ToolUseId, len(tc.Input), event.ToolStop, tc.Input)
+						if tc.Name != "" && tc.ToolUseId != "" {
+							// 检查是否是同一个工具调用的续传
+							if currentToolCall != nil && currentToolCall.ToolUseId == tc.ToolUseId {
+								// 同一个工具调用，累积 input
+								log.Debugf("[Kiro Stream] Appending input to existing tool call, current_len=%d, appending=%q",
+									currentToolCall.Input.Len(), tc.Input)
+								currentToolCall.Input.WriteString(tc.Input)
+							} else {
+								// 不同的工具调用，先保存当前的
+								if currentToolCall != nil {
+									log.Debugf("[Kiro Stream] Saving previous tool call: id=%s, input_len=%d",
+										currentToolCall.ToolUseId, currentToolCall.Input.Len())
+									toolCalls = append(toolCalls, currentToolCall)
 								}
-								blockIndex++
+								// 开始新的工具调用
+								currentToolCall = &accumulatedToolCall{
+									ToolUseId: tc.ToolUseId,
+									Name:      tc.Name,
+								}
+								log.Debugf("[Kiro Stream] Starting new tool call: id=%s, initial_input=%q",
+									tc.ToolUseId, tc.Input)
+								currentToolCall.Input.WriteString(tc.Input)
 							}
-							// Start new tool_use block
-							currentToolUse = event.ToolUse
-							toolInputBuilder.Reset()
-							toolStartEvent := e.buildClaudeToolUseStart(blockIndex, event.ToolUse.ToolUseId, event.ToolUse.Name)
-							toolStartChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, toolStartEvent, &param)
-							for _, chunk := range toolStartChunks {
-								out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
+							// 如果这个事件包含 stop，完成工具调用
+							if event.ToolStop {
+								toolCalls = append(toolCalls, currentToolCall)
+								currentToolCall = nil
 							}
-						}
-						// 如果有 input，发送 input delta
-						if event.ToolUse.Input != "" {
-							toolInputBuilder.WriteString(event.ToolUse.Input)
-							inputDeltaEvent := e.buildClaudeToolInputDelta(blockIndex, event.ToolUse.Input)
-							inputDeltaChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, inputDeltaEvent, &param)
-							for _, chunk := range inputDeltaChunks {
-								out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-							}
-						}
-						// 如果有 stop，结束工具调用
-						if event.ToolStop {
-							blockStopEvent := e.buildClaudeContentBlockStop(blockIndex)
-							blockStopChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, blockStopEvent, &param)
-							for _, chunk := range blockStopChunks {
-								out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-							}
-							blockIndex++
-							currentToolUse = nil
 						}
 					} else if event.Type == "toolUseInput" && event.ToolInput != "" {
-						toolInputBuilder.WriteString(event.ToolInput)
-						// Send input delta
-						inputDeltaEvent := e.buildClaudeToolInputDelta(blockIndex, event.ToolInput)
-						inputDeltaChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, inputDeltaEvent, &param)
-						for _, chunk := range inputDeltaChunks {
-							out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
+						// 工具调用的 input 续传事件
+						if currentToolCall != nil {
+							currentToolCall.Input.WriteString(event.ToolInput)
+						} else {
+							log.Warnf("[Kiro Stream] Received toolUseInput but currentToolCall is nil, input_len=%d", len(event.ToolInput))
 						}
 					} else if event.Type == "toolUseStop" && event.ToolStop {
-						// End tool_use block
-						if currentToolUse != nil {
-							blockStopEvent := e.buildClaudeContentBlockStop(blockIndex)
-							blockStopChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, blockStopEvent, &param)
-							for _, chunk := range blockStopChunks {
-								out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-							}
-							blockIndex++
-							currentToolUse = nil
+						// 工具调用结束事件
+						if currentToolCall != nil {
+							toolCalls = append(toolCalls, currentToolCall)
+							currentToolCall = nil
 						}
 					}
 				}
 			}
+			// Heartbeat check
+			if time.Since(lastLogTime) > 5*time.Second {
+				log.Debugf("[Kiro Stream Debug] Heartbeat: total bytes received so far: %d, buffer size: %d", totalBytesReceived, buffer.Len())
+				lastLogTime = time.Now()
+			}
+
 			if readErr != nil {
 				if readErr != io.EOF {
+					log.Errorf("[Kiro Stream Debug] Read error: %v, total bytes received: %d", readErr, totalBytesReceived)
 					recordAPIResponseError(ctx, e.cfg, readErr)
 					reporter.publishFailure(ctx)
 					out <- cliproxyexecutor.StreamChunk{Err: readErr}
 					return
 				}
+				log.Infof("[Kiro Stream] Stream completed, total bytes: %d", totalBytesReceived)
 				break
 			}
 		}
 
-		// Process any remaining buffer content
-		if buffer.Len() > 0 {
-			events, _ := e.parseKiroStreamBuffer(buffer.String())
-			for _, event := range events {
-				if event.Type == "content" && event.Content != "" && event.Content != lastContent {
-					totalContent.WriteString(event.Content)
-					deltaEvent := e.buildClaudeContentBlockDelta(blockIndex, event.Content)
-					deltaChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, deltaEvent, &param)
-					for _, chunk := range deltaChunks {
-						out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-					}
+		// 处理未完成的工具调用（如果流提前结束）
+		if currentToolCall != nil {
+			toolCalls = append(toolCalls, currentToolCall)
+			currentToolCall = nil
+		}
+
+		// 发送 content_block_stop 事件 (index: 0, text block)
+		blockStopEvent := e.buildClaudeContentBlockStop(0)
+		sendEvent(blockStopEvent)
+
+		// 流结束后，统一发送所有工具调用
+		var toolInputTotal strings.Builder
+		if len(toolCalls) > 0 {
+			for i, tc := range toolCalls {
+				blockIndex := i + 1
+				inputStr := tc.Input.String()
+				toolInputTotal.WriteString(inputStr)
+
+				// 确保 input 不为空，如果为空则使用空对象
+				if inputStr == "" {
+					inputStr = "{}"
 				}
-			}
-		}
+				
+				// 修复 input 中的无效 JSON 转义序列
+				originalLen := len(inputStr)
+				inputStr = fixInvalidJSONEscapes(inputStr)
+				if len(inputStr) != originalLen {
+					log.Infof("[Kiro Stream] Tool call %d: fixed invalid JSON escapes, len changed from %d to %d",
+						blockIndex, originalLen, len(inputStr))
+				}
+				
+				// 验证 input 是否为有效 JSON，如果不是则记录警告
+				var jsonCheck interface{}
+				if err := json.Unmarshal([]byte(inputStr), &jsonCheck); err != nil {
+					log.Warnf("[Kiro Stream] Tool call %d input is still not valid JSON after fix: %v, first 100 chars: %s",
+						blockIndex, err, inputStr[:min(100, len(inputStr))])
+				}
+				log.Infof("[Kiro Stream] Sending tool call %d: name=%s, id=%s, input_len=%d",
+					blockIndex, tc.Name, tc.ToolUseId, len(inputStr))
+				// 调试日志：记录 input 的前 500 个字符
+				if len(inputStr) > 500 {
+					log.Debugf("[Kiro Stream] Tool input (first 500 chars): %s", inputStr[:500])
+				} else {
+					log.Debugf("[Kiro Stream] Tool input: %s", inputStr)
+				}
 
-		// 如果还有未关闭的工具调用，关闭它
-		if currentToolUse != nil {
-			blockStopEvent := e.buildClaudeContentBlockStop(blockIndex)
-			blockStopChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, blockStopEvent, &param)
-			for _, chunk := range blockStopChunks {
-				out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-			}
-			blockIndex++
-			currentToolUse = nil
-		}
+				// content_block_start
+				toolStartEvent := e.buildClaudeToolUseStart(blockIndex, tc.ToolUseId, tc.Name)
+				sendEvent(toolStartEvent)
 
-		// Send content_block_stop event for text block (only if blockIndex is still 0)
-		if blockIndex == 0 {
-			blockStopEvent := e.buildClaudeContentBlockStop(0)
-			blockStopChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, blockStopEvent, &param)
-			for _, chunk := range blockStopChunks {
-				out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
+				// content_block_delta (一次性发送完整的 input)
+				inputDeltaEvent := e.buildClaudeToolInputDelta(blockIndex, inputStr)
+				sendEvent(inputDeltaEvent)
+
+				// content_block_stop
+				toolStopEvent := e.buildClaudeContentBlockStop(blockIndex)
+				sendEvent(toolStopEvent)
 			}
 		}
 
 		// Send message_delta event with stop_reason based on whether tool was used
 		stopReason := "end_turn"
-		if blockIndex > 0 {
+		if len(toolCalls) > 0 {
 			stopReason = "tool_use"
 		}
-		outputTokens := estimateOutputTokens(totalContent.String() + toolInputBuilder.String())
-		deltaEvent := e.buildClaudeMessageDelta(stopReason, outputTokens)
-		deltaChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, deltaEvent, &param)
-		for _, chunk := range deltaChunks {
-			out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-		}
+		log.Infof("[Kiro Stream] Sending final events: toolCalls=%d, stopReason=%s, contentLen=%d, toolInputLen=%d",
+			len(toolCalls), stopReason, totalContent.Len(), toolInputTotal.Len())
+		outputTokens := estimateOutputTokens(totalContent.String() + toolInputTotal.String())
+		messageDeltaEvent := e.buildClaudeMessageDelta(stopReason, outputTokens)
+		sendEvent(messageDeltaEvent)
 
 		// Send message_stop event
 		stopEvent := []byte(`event: message_stop` + "\n" + `data: {"type":"message_stop"}` + "\n\n")
-		stopChunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), body, stopEvent, &param)
-		for _, chunk := range stopChunks {
-			out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunk)}
-		}
+		sendEvent(stopEvent)
+		log.Infof("[Kiro Stream] All final events sent")
 
 		// Record successful request
 		reporter.ensurePublished(ctx)
@@ -959,6 +1020,58 @@ func (e *KiroExecutor) buildKiroRequest(claudeBody []byte, model string, tokenDa
 	}
 
 	return json.Marshal(request)
+}
+
+// fixInvalidJSONEscapes fixes invalid JSON escape sequences in a string
+// Valid JSON escapes: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
+// Invalid escapes like \A will be converted to \\A (literal backslash + A)
+func fixInvalidJSONEscapes(s string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+	
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			next := s[i+1]
+			// Check if it's a valid JSON escape
+			switch next {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+				// Valid escape, keep as is
+				result.WriteByte(s[i])
+				result.WriteByte(next)
+				i++
+			case 'u':
+				// Unicode escape \uXXXX - need 4 more hex digits
+				if i+5 < len(s) {
+					hex := s[i+2 : i+6]
+					valid := true
+					for _, c := range hex {
+						if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+							valid = false
+							break
+						}
+					}
+					if valid {
+						// Valid unicode escape
+						result.WriteString(s[i : i+6])
+						i += 5
+						continue
+					}
+				}
+				// Invalid unicode escape, escape the backslash
+				result.WriteString("\\\\")
+				result.WriteByte(next)
+				i++
+			default:
+				// Invalid escape sequence, escape the backslash
+				result.WriteString("\\\\")
+				result.WriteByte(next)
+				i++
+			}
+		} else {
+			result.WriteByte(s[i])
+		}
+	}
+	return result.String()
 }
 
 // dedupeToolResults removes duplicate toolResults by toolUseId
