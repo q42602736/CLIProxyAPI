@@ -46,14 +46,6 @@ const (
 
 var randSource = rand.New(rand.NewSource(time.Now().UnixNano()))
 
-// truncateBytes returns the first n bytes of b as a string for logging
-func truncateBytes(b []byte, n int) string {
-	if len(b) <= n {
-		return string(b)
-	}
-	return string(b[:n]) + "..."
-}
-
 // AntigravityExecutor proxies requests to the antigravity upstream.
 type AntigravityExecutor struct {
 	cfg *config.Config
@@ -511,9 +503,6 @@ func (e *AntigravityExecutor) convertStreamToNonStream(stream []byte) []byte {
 func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (stream <-chan cliproxyexecutor.StreamChunk, err error) {
 	ctx = context.WithValue(ctx, "alt", "")
 
-	log.Debugf("[Antigravity Stream] Starting request for model: %s, payload_len=%d", req.Model, len(req.Payload))
-	log.Debugf("[Antigravity Stream] Request payload first 500: %s", truncateBytes(req.Payload, 500))
-
 	token, updatedAuth, errToken := e.ensureAccessToken(ctx, auth)
 	if errToken != nil {
 		return nil, errToken
@@ -535,8 +524,6 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 	translated = normalizeAntigravityThinking(req.Model, translated)
 	translated = applyPayloadConfigWithRoot(e.cfg, req.Model, "antigravity", "request", translated)
 
-	log.Debugf("[Antigravity Stream] Translated payload first 1000: %s", truncateBytes(translated, 1000))
-
 	baseURLs := antigravityBaseURLFallbackOrder(auth)
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 
@@ -551,7 +538,6 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			return nil, err
 		}
 
-		log.Debugf("[Antigravity Stream] Sending to URL: %s", baseURL)
 		httpResp, errDo := httpClient.Do(httpReq)
 		if errDo != nil {
 			recordAPIResponseError(ctx, e.cfg, errDo)
@@ -607,14 +593,8 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			scanner := bufio.NewScanner(resp.Body)
 			scanner.Buffer(nil, streamScannerBuffer)
 			var param any
-			var lineCount int
-			var totalChunks int
 			for scanner.Scan() {
 				line := scanner.Bytes()
-				lineCount++
-				if lineCount <= 3 || lineCount%50 == 0 {
-					log.Debugf("[Antigravity Stream] Line %d, len=%d, first100=%s", lineCount, len(line), truncateBytes(line, 100))
-				}
 				appendAPIResponseChunk(ctx, e.cfg, line)
 
 				// Filter usage metadata for all models
@@ -632,11 +612,9 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 
 				chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), translated, bytes.Clone(payload), &param)
 				for i := range chunks {
-					totalChunks++
 					out <- cliproxyexecutor.StreamChunk{Payload: []byte(chunks[i])}
 				}
 			}
-			log.Debugf("[Antigravity Stream] Finished reading. Lines=%d, Chunks=%d", lineCount, totalChunks)
 			tail := sdktranslator.TranslateStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), translated, []byte("[DONE]"), &param)
 			for i := range tail {
 				out <- cliproxyexecutor.StreamChunk{Payload: []byte(tail[i])}
