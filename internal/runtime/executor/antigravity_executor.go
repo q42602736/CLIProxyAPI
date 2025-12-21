@@ -1438,8 +1438,8 @@ func (e *AntigravityExecutor) GetQuotas(ctx context.Context, auth *cliproxyauth.
 
 				// Use the display name as the key
 				quotas[displayName] = map[string]interface{}{
-					"remaining":  remaining,
-					"resetTime":  resetTime,
+					"remaining": remaining,
+					"resetTime": resetTime,
 				}
 			}
 			return true
