@@ -109,6 +109,7 @@ func addAdditionalPropertiesHints(jsonStr string) string {
 var unsupportedConstraints = []string{
 	"minLength", "maxLength", "exclusiveMinimum", "exclusiveMaximum",
 	"pattern", "minItems", "maxItems", "format",
+	"minimum", "maximum", "multipleOf", // Gemini doesn't support numeric constraints
 	"default", "examples", // Claude rejects these in VALIDATED mode
 }
 
