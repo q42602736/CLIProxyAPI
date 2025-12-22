@@ -2461,33 +2461,52 @@ func (h *Handler) GetKiroUsageLimits(c *gin.Context) {
 	}
 
 	kiroAuthSvc := kiroauth.NewKiroAuth(h.cfg)
-	usageLimits, err := kiroAuthSvc.GetUsageLimits(ctx, tokenData)
-	if err != nil {
+
+	// Retry logic for GetUsageLimits
+	const maxRetryAttempts = 3
+	const retryDelay = 500 * time.Millisecond
+	var usageLimits interface{}
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
+		usageLimits, err = kiroAuthSvc.GetUsageLimits(ctx, tokenData)
+		if err == nil {
+			break
+		}
+
+		lastErr = err
+		log.Debugf("[Kiro Usage] Attempt %d/%d failed for auth %s: %v", attempt, maxRetryAttempts, authID, err)
+
 		// If 403 error, try to refresh token and retry
 		if strings.Contains(err.Error(), "403") && tokenData.RefreshToken != "" {
-			fmt.Println("[Kiro Usage] Received 403, attempting token refresh...")
+			log.Infof("[Kiro Usage] Received 403, attempting token refresh...")
 			newTokenData, refreshErr := kiroAuthSvc.RefreshTokens(ctx, tokenData)
 			if refreshErr != nil {
-				fmt.Printf("[Kiro Usage] Token refresh failed: %v\n", refreshErr)
-				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
-				return
+				log.Warnf("[Kiro Usage] Token refresh failed: %v", refreshErr)
+				// Continue to next retry attempt
+				if attempt < maxRetryAttempts {
+					time.Sleep(retryDelay)
+				}
+				continue
 			}
-			fmt.Println("[Kiro Usage] Token refreshed, retrying...")
+			log.Infof("[Kiro Usage] Token refreshed successfully")
 			// Update the original auth file with new token
-			authFilePath := filepath.Join(h.cfg.AuthDir, authID)
 			if saveErr := updateKiroAuthFile(authFilePath, newTokenData); saveErr != nil {
-				fmt.Printf("[Kiro Usage] Failed to save refreshed token: %v\n", saveErr)
+				log.Warnf("[Kiro Usage] Failed to save refreshed token: %v", saveErr)
 			}
-			// Retry with new token
-			usageLimits, err = kiroAuthSvc.GetUsageLimits(ctx, newTokenData)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
-				return
-			}
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
-			return
+			// Update tokenData for next attempt
+			tokenData = newTokenData
 		}
+
+		// Don't wait after the last attempt
+		if attempt < maxRetryAttempts {
+			time.Sleep(retryDelay)
+		}
+	}
+
+	if lastErr != nil && usageLimits == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": lastErr.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
