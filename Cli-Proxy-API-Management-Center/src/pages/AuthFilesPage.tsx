@@ -345,6 +345,11 @@ export function AuthFilesPage() {
     loadAntigravityQuotas();
     loadExcluded();
 
+    // 设置自动刷新统计数据（每10秒刷新一次成功/失败次数）
+    const statsRefreshIntervalId = setInterval(() => {
+      loadKeyStats();
+    }, 10 * 1000); // 10秒
+
     // 设置自动刷新配额信息（使用可配置的间隔时间，单位：分钟）
     const quotaRefreshIntervalId = setInterval(() => {
       loadAntigravityQuotas();
@@ -363,10 +368,11 @@ export function AuthFilesPage() {
 
     // 清理定时器
     return () => {
+      clearInterval(statsRefreshIntervalId);
       clearInterval(quotaRefreshIntervalId);
       clearInterval(timeUpdateIntervalId);
     };
-  }, [loadFiles, loadKeyStats, loadExcluded, loadAntigravityQuotas, quotaRefreshInterval]);
+  }, [loadFiles, loadKeyStats, loadExcluded, loadAntigravityQuotas, quotaRefreshInterval, loadKiroUsageLimits]);
 
   // 当文件列表变化时加载 Kiro 用量
   useEffect(() => {

@@ -110,7 +110,7 @@ var __yieldStar = (value) => {
 };
 var __forAwait = (obj, it, method) => (it = obj[__knownSymbol("asyncIterator")]) ? it.call(obj) : (obj = obj[__knownSymbol("iterator")](), it = {}, method = (key, fn) => (fn = obj[key]) && (it[key] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it);
 var require_index_001 = __commonJS({
-  "index-DZpJc3D9.js"(exports) {
+  "index-Jq9erqVG.js"(exports) {
     var _Aa;
     (function polyfill() {
       const relList = document.createElement("link").relList;
@@ -25672,6 +25672,9 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
         loadKeyStats();
         loadAntigravityQuotas();
         loadExcluded();
+        const statsRefreshIntervalId = setInterval(() => {
+          loadKeyStats();
+        }, 10 * 1e3);
         const quotaRefreshIntervalId = setInterval(() => {
           loadAntigravityQuotas();
           authFilesApi.list().then((data) => {
@@ -25685,10 +25688,11 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
           setCurrentTime(/* @__PURE__ */ new Date());
         }, 1e3);
         return () => {
+          clearInterval(statsRefreshIntervalId);
           clearInterval(quotaRefreshIntervalId);
           clearInterval(timeUpdateIntervalId);
         };
-      }, [loadFiles, loadKeyStats, loadExcluded, loadAntigravityQuotas, quotaRefreshInterval]);
+      }, [loadFiles, loadKeyStats, loadExcluded, loadAntigravityQuotas, quotaRefreshInterval, loadKiroUsageLimits]);
       reactExports.useEffect(() => {
         if (files.length > 0) {
           loadKiroUsageLimits(files);
@@ -65990,7 +65994,7 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
                 t2("footer.version"),
                 ": ",
-                "v6.6.33-9-gfcfefcd"
+                "v6.6.40-20-ge90b7cb"
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
                 t2("footer.build_date"),
