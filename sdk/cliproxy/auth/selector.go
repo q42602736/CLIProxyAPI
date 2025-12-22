@@ -22,6 +22,11 @@ type RoundRobinSelector struct {
 	cursors map[string]int
 }
 
+// FillFirstSelector selects the first available credential (deterministic ordering).
+// This "burns" one account before moving to the next, which can help stagger
+// rolling-window subscription caps (e.g. chat message limits).
+type FillFirstSelector struct{}
+
 type blockReason int
 
 const (
@@ -180,6 +185,68 @@ func (s *RoundRobinSelector) Pick(ctx context.Context, provider, model string, o
 	s.mu.Unlock()
 	// log.Debugf("available: %d, index: %d, key: %d, priority: %d", len(available), index, index%len(available), highestPriority)
 	return available[index%len(available)], nil
+}
+
+// Pick selects the first available auth for the provider with priority support.
+// Auths with higher Priority values are selected first. Within the same priority level,
+// the first auth (by ID order) is always selected.
+func (s *FillFirstSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
+	_ = ctx
+	_ = opts
+	if len(auths) == 0 {
+		return nil, &Error{Code: "auth_not_found", Message: "no auth candidates"}
+	}
+
+	now := time.Now()
+	cooldownCount := 0
+	var earliest time.Time
+
+	// Group auths by priority and filter out blocked ones
+	priorityGroups := make(map[int][]*Auth)
+	for i := 0; i < len(auths); i++ {
+		candidate := auths[i]
+		blocked, reason, next := isAuthBlockedForModel(candidate, model, now)
+		if !blocked {
+			priority := candidate.Priority
+			priorityGroups[priority] = append(priorityGroups[priority], candidate)
+			continue
+		}
+		if reason == blockReasonCooldown {
+			cooldownCount++
+			if !next.IsZero() && (earliest.IsZero() || next.Before(earliest)) {
+				earliest = next
+			}
+		}
+	}
+
+	if len(priorityGroups) == 0 {
+		if cooldownCount == len(auths) && !earliest.IsZero() {
+			resetIn := earliest.Sub(now)
+			if resetIn < 0 {
+				resetIn = 0
+			}
+			return nil, newModelCooldownError(model, provider, resetIn)
+		}
+		return nil, &Error{Code: "auth_unavailable", Message: "no auth available"}
+	}
+
+	// Find the highest priority level with available auths
+	priorities := make([]int, 0, len(priorityGroups))
+	for priority := range priorityGroups {
+		priorities = append(priorities, priority)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(priorities)))
+
+	highestPriority := priorities[0]
+	available := priorityGroups[highestPriority]
+
+	// Sort by ID for deterministic selection
+	if len(available) > 1 {
+		sort.Slice(available, func(i, j int) bool { return available[i].ID < available[j].ID })
+	}
+
+	// Always return the first available auth
+	return available[0], nil
 }
 
 func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, blockReason, time.Time) {
