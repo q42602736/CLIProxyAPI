@@ -1006,20 +1006,21 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 	payload = geminiToAntigravity(modelName, payload, projectID)
 	payload, _ = sjson.SetBytes(payload, "model", alias2ModelName(modelName))
 
-	if strings.Contains(modelName, "claude") {
-		strJSON := string(payload)
-		paths := make([]string, 0)
-		util.Walk(gjson.ParseBytes(payload), "", "parametersJsonSchema", &paths)
-		for _, p := range paths {
-			strJSON, _ = util.RenameKey(strJSON, p, p[:len(p)-len("parametersJsonSchema")]+"parameters")
-		}
-
-		// Use the centralized schema cleaner to handle unsupported keywords,
-		// const->enum conversion, and flattening of types/anyOf.
-		strJSON = util.CleanJSONSchemaForAntigravity(strJSON)
-
-		payload = []byte(strJSON)
+	// Always clean JSON Schema for Antigravity API compatibility
+	// This removes unsupported fields like multipleOf, handles const->enum conversion,
+	// and flattens complex types/anyOf structures
+	strJSON := string(payload)
+	paths := make([]string, 0)
+	util.Walk(gjson.ParseBytes(payload), "", "parametersJsonSchema", &paths)
+	for _, p := range paths {
+		strJSON, _ = util.RenameKey(strJSON, p, p[:len(p)-len("parametersJsonSchema")]+"parameters")
 	}
+
+	// Use the centralized schema cleaner to handle unsupported keywords,
+	// const->enum conversion, and flattening of types/anyOf.
+	strJSON = util.CleanJSONSchemaForAntigravity(strJSON)
+
+	payload = []byte(strJSON)
 
 	httpReq, errReq := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), bytes.NewReader(payload))
 	if errReq != nil {
