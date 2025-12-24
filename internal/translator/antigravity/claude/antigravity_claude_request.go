@@ -89,6 +89,10 @@ func ConvertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 				hasSystemInstruction = true
 			}
 		}
+	} else if systemResult.Type == gjson.String {
+		systemInstructionJSON = `{"role":"user","parts":[{"text":""}]}`
+		systemInstructionJSON, _ = sjson.Set(systemInstructionJSON, "parts.0.text", systemResult.String())
+		hasSystemInstruction = true
 	}
 
 	// contents
@@ -124,32 +128,31 @@ func ConvertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 						// Use GetThinkingText to handle wrapped thinking objects
 						thinkingText := util.GetThinkingText(contentResult)
 						signatureResult := contentResult.Get("signature")
-					clientSignature := ""
-					if signatureResult.Exists() && signatureResult.String() != "" {
-						clientSignature = signatureResult.String()
-					}
-
-					// Always try cached signature first (more reliable than client-provided)
-					// Client may send stale or invalid signatures from different sessions
-					signature := ""
-					if sessionID != "" && thinkingText != "" {
-						if cachedSig := cache.GetCachedSignature(sessionID, thinkingText); cachedSig != "" {
-							signature = cachedSig
-							log.Debugf("Using cached signature for thinking block")
+						clientSignature := ""
+						if signatureResult.Exists() && signatureResult.String() != "" {
+							clientSignature = signatureResult.String()
 						}
-					}
 
-					// Fallback to client signature only if cache miss and client signature is valid
-					if signature == "" && cache.HasValidSignature(clientSignature) {
-						signature = clientSignature
-						log.Debugf("Using client-provided signature for thinking block")
-					}
+						// Always try cached signature first (more reliable than client-provided)
+						// Client may send stale or invalid signatures from different sessions
+						signature := ""
+						if sessionID != "" && thinkingText != "" {
+							if cachedSig := cache.GetCachedSignature(sessionID, thinkingText); cachedSig != "" {
+								signature = cachedSig
+								log.Debugf("Using cached signature for thinking block")
+							}
+						}
 
-					// Store for subsequent tool_use in the same message
-					if cache.HasValidSignature(signature) {
-						currentMessageThinkingSignature = signature
-					}
+						// Fallback to client signature only if cache miss and client signature is valid
+						if signature == "" && cache.HasValidSignature(clientSignature) {
+							signature = clientSignature
+							log.Debugf("Using client-provided signature for thinking block")
+						}
 
+						// Store for subsequent tool_use in the same message
+						if cache.HasValidSignature(signature) {
+							currentMessageThinkingSignature = signature
+						}
 
 						// Skip trailing unsigned thinking blocks on last assistant message
 						isUnsigned := !cache.HasValidSignature(signature)
@@ -324,6 +327,7 @@ func ConvertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	// tools
 	toolsJSON := ""
 	toolDeclCount := 0
+	allowedToolKeys := []string{"name", "description", "behavior", "parameters", "parametersJsonSchema", "response", "responseJsonSchema"}
 	toolsResult := gjson.GetBytes(rawJSON, "tools")
 	if toolsResult.IsArray() {
 		toolsJSON = `[{"functionDeclarations":[]}]`
@@ -336,10 +340,12 @@ func ConvertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 				inputSchema := util.CleanJSONSchemaForAntigravity(inputSchemaResult.Raw)
 				tool, _ := sjson.Delete(toolResult.Raw, "input_schema")
 				tool, _ = sjson.SetRaw(tool, "parametersJsonSchema", inputSchema)
-				tool, _ = sjson.Delete(tool, "strict")
-				tool, _ = sjson.Delete(tool, "input_examples")
-				tool, _ = sjson.Delete(tool, "type")
-				tool, _ = sjson.Delete(tool, "cache_control")
+				for toolKey := range gjson.Parse(tool).Map() {
+					if util.InArray(allowedToolKeys, toolKey) {
+						continue
+					}
+					tool, _ = sjson.Delete(tool, toolKey)
+				}
 				toolsJSON, _ = sjson.SetRaw(toolsJSON, "0.functionDeclarations.-1", tool)
 				toolDeclCount++
 			}
