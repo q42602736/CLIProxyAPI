@@ -72,7 +72,6 @@ func (h *Handler) getQuotasWithRetry(ctx context.Context, exec *executor.Antigra
 		}
 
 		lastErr = err
-		log.Debugf("[Antigravity Quota] Attempt %d/%d failed for auth %s: %v", attempt, maxAttempts, auth.ID, err)
 
 		// Don't wait after the last attempt
 		if attempt < maxAttempts {
