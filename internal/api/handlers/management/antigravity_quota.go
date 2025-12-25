@@ -45,16 +45,23 @@ func (h *Handler) GetAntigravityQuotas(c *gin.Context) {
 		// Create executor and fetch quotas with retry
 		exec := executor.NewAntigravityExecutor(h.cfg)
 		quotas, err := h.getQuotasWithRetry(ctx, exec, auth, quotaRetryAttempts)
-		if err != nil {
-			log.WithError(err).Warnf("failed to get quotas for auth %s after %d attempts", auth.ID, quotaRetryAttempts)
-			continue
-		}
 
 		// Store quotas with auth file name as key
 		fileName := auth.FileName
 		if fileName == "" {
 			fileName = auth.ID
 		}
+
+		if err != nil {
+			log.WithError(err).Warnf("failed to get quotas for auth %s after %d attempts", auth.ID, quotaRetryAttempts)
+			// 即使查询失败，也要显示该认证文件，标记为错误状态
+			result[fileName] = map[string]interface{}{
+				"error":  err.Error(),
+				"status": "failed",
+			}
+			continue
+		}
+
 		result[fileName] = quotas
 	}
 

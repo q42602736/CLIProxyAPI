@@ -1456,19 +1456,23 @@ func (e *AntigravityExecutor) GetQuotas(ctx context.Context, auth *cliproxyauth.
 			}
 
 			// Extract quota info
+			// 始终添加模型配额信息，即使配额为 0 或不存在
 			quotaInfo := modelData.Get("quotaInfo")
+			remaining := 0.0
+			resetTime := ""
+
 			if quotaInfo.Exists() {
-				remaining := quotaInfo.Get("remainingFraction").Float()
+				remaining = quotaInfo.Get("remainingFraction").Float()
 				if remaining == 0 {
 					remaining = quotaInfo.Get("remaining").Float()
 				}
-				resetTime := quotaInfo.Get("resetTime").String()
+				resetTime = quotaInfo.Get("resetTime").String()
+			}
 
-				// Use the display name as the key
-				quotas[displayName] = map[string]interface{}{
-					"remaining": remaining,
-					"resetTime": resetTime,
-				}
+			// Use the display name as the key
+			quotas[displayName] = map[string]interface{}{
+				"remaining": remaining,
+				"resetTime": resetTime,
 			}
 			return true
 		})
