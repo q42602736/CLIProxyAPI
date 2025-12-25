@@ -37,8 +37,9 @@ func (h *Handler) GetAntigravityQuotas(c *gin.Context) {
 			continue
 		}
 
-		// Skip disabled or unavailable auths
-		if auth.Disabled || auth.Unavailable || auth.Status == coreauth.StatusDisabled {
+		// 不跳过 Unavailable 的认证文件，因为可能只是部分配额用完
+		// 只跳过明确被用户禁用的认证文件
+		if auth.Disabled {
 			continue
 		}
 
