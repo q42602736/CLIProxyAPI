@@ -237,9 +237,49 @@ export function cleanJsonSchemaProperties(schema) {
         return schema;
     }
 
+    // Gemini API 支持的字段白名单
+    const allowedFields = [
+        "type",
+        "description",
+        "properties",
+        "required",
+        "enum",
+        "items",
+        "format",
+        "nullable",
+        "default"
+    ];
+
+    // Gemini API 不支持的字段黑名单（需要移除）
+    const blockedFields = [
+        "multipleOf",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "minProperties",
+        "maxProperties",
+        "additionalProperties",
+        "$schema",
+        "$id",
+        "$ref",
+        "definitions",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not"
+    ];
+
     const sanitized = {};
     for (const [key, value] of Object.entries(schema)) {
-        if (["type", "description", "properties", "required", "enum", "items"].includes(key)) {
+        // 只保留白名单中的字段，且不在黑名单中
+        if (allowedFields.includes(key) && !blockedFields.includes(key)) {
             sanitized[key] = value;
         }
     }
