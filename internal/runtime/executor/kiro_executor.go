@@ -94,7 +94,9 @@ func (e *KiroExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 		AuthValue: authValue,
 	})
 
-	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+	// Kiro 服务超时设置为 5 分钟（参考 AIClient-2-API commit 8b70e2ad）
+	// 增加超时时间以适应长时间的工具调用场景
+	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 300*time.Second)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		recordAPIResponseError(ctx, e.cfg, err)
@@ -259,7 +261,9 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 		AuthValue: authValue,
 	})
 
-	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+	// Kiro 服务超时设置为 5 分钟（参考 AIClient-2-API commit 8b70e2ad）
+	// 增加超时时间以适应长时间的工具调用场景
+	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 300*time.Second)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		recordAPIResponseError(ctx, e.cfg, err)
@@ -1009,6 +1013,20 @@ func (e *KiroExecutor) buildKiroRequest(claudeBody []byte, model string, tokenDa
 	}
 	if len(userInputMessageContext) > 0 {
 		userInputMessage["userInputMessageContext"] = userInputMessageContext
+	}
+
+	// 确保 history 以 assistantResponseMessage 结尾（防御性检查）
+	// 参考 AIClient-2-API commit ded3a8e 的修复
+	if len(history) > 0 {
+		lastHistoryItem := history[len(history)-1]
+		if _, hasAssistant := lastHistoryItem["assistantResponseMessage"]; !hasAssistant {
+			log.Debugf("[Kiro] History does not end with assistantResponseMessage, adding empty one")
+			history = append(history, map[string]interface{}{
+				"assistantResponseMessage": map[string]interface{}{
+					"content": "Continue",
+				},
+			})
+		}
 	}
 
 	request := map[string]interface{}{
