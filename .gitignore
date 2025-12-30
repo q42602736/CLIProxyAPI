@@ -4,7 +4,7 @@ cliproxy
 *.exe
 
 # Deprecated directories (removed from upstream)
-AIClient-2-API/
+/AIClient-2-API/
 Cli-Proxy-API-Management-Center/
 
 # Configuration
@@ -23,8 +23,6 @@ pgstore/*
 gitstore/*
 objectstore/*
 
-# Static assets
-static/*
 
 # Authentication data
 auths/*
