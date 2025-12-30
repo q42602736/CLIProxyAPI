@@ -3,7 +3,7 @@
  */
 
 import { apiClient } from './client';
-import type { AuthFilesResponse } from '@/types/authFile';
+import type { AuthFilesResponse, CodexUsageResponse } from '@/types/authFile';
 
 export const authFilesApi = {
   list: () => apiClient.get<AuthFilesResponse>('/auth-files'),
@@ -91,6 +91,16 @@ export const authFilesApi = {
     try {
       const data = await apiClient.get('/kiro-usage-limits', { params: { auth_id: authId } });
       return data?.usage || null;
+    } catch {
+      return null;
+    }
+  },
+
+  // 获取 Codex 认证文件的额度信息
+  async getCodexUsage(name: string): Promise<CodexUsageResponse | null> {
+    try {
+      const data = await apiClient.get(`/codex-usage?name=${encodeURIComponent(name)}`);
+      return data as CodexUsageResponse;
     } catch {
       return null;
     }

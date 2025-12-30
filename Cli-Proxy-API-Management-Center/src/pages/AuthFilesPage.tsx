@@ -11,7 +11,7 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
 import { authFilesApi, usageApi } from '@/services/api';
 import { apiClient } from '@/services/api/client';
-import type { AuthFileItem } from '@/types';
+import type { AuthFileItem, CodexUsageResponse } from '@/types';
 import type { KeyStats, KeyStatBucket } from '@/utils/usage';
 import { formatFileSize } from '@/utils/format';
 import styles from './AuthFilesPage.module.scss';
@@ -174,6 +174,7 @@ export function AuthFilesPage() {
   const [deletingAll, setDeletingAll] = useState(false);
   const [keyStats, setKeyStats] = useState<KeyStats>({ bySource: {}, byAuthIndex: {} });
   const [antigravityQuotas, setAntigravityQuotas] = useState<Record<string, Record<string, { remaining: number; resetTime: string }>>>({});
+  const [codexUsage, setCodexUsage] = useState<Record<string, CodexUsageResponse>>({});
   const [kiroUsageLimits, setKiroUsageLimits] = useState<Record<string, {
     usageBreakdownList?: Array<{
       resourceType?: string;
@@ -308,6 +309,25 @@ export function AuthFilesPage() {
     setKiroUsageLimits(newLimits);
   }, []);
 
+  // 加载 Codex 额度信息
+  const loadCodexUsage = useCallback(async (fileList: AuthFileItem[]) => {
+    const codexFiles = fileList.filter((f) => f.type === 'codex');
+    if (codexFiles.length === 0) return;
+
+    const newUsage: Record<string, CodexUsageResponse> = {};
+    for (const file of codexFiles) {
+      try {
+        const usage = await authFilesApi.getCodexUsage(file.name);
+        if (usage) {
+          newUsage[file.name] = usage;
+        }
+      } catch {
+        // 静默失败
+      }
+    }
+    setCodexUsage(newUsage);
+  }, []);
+
   // 加载 OAuth 排除列表
   const loadExcluded = useCallback(async () => {
     try {
@@ -353,10 +373,11 @@ export function AuthFilesPage() {
     // 设置自动刷新配额信息（使用可配置的间隔时间，单位：分钟）
     const quotaRefreshIntervalId = setInterval(() => {
       loadAntigravityQuotas();
-      // 同时刷新 Kiro 用量（需要最新的文件列表）
+      // 同时刷新 Kiro 用量和 Codex 额度（需要最新的文件列表）
       authFilesApi.list().then((data) => {
         if (data?.files) {
           loadKiroUsageLimits(data.files);
+          loadCodexUsage(data.files);
         }
       }).catch(() => {});
     }, quotaRefreshInterval * 60 * 1000); // 转换为毫秒
@@ -372,14 +393,15 @@ export function AuthFilesPage() {
       clearInterval(quotaRefreshIntervalId);
       clearInterval(timeUpdateIntervalId);
     };
-  }, [loadFiles, loadKeyStats, loadExcluded, loadAntigravityQuotas, quotaRefreshInterval, loadKiroUsageLimits]);
+  }, [loadFiles, loadKeyStats, loadExcluded, loadAntigravityQuotas, quotaRefreshInterval, loadKiroUsageLimits, loadCodexUsage]);
 
-  // 当文件列表变化时加载 Kiro 用量
+  // 当文件列表变化时加载 Kiro 用量和 Codex 额度
   useEffect(() => {
     if (files.length > 0) {
       loadKiroUsageLimits(files);
+      loadCodexUsage(files);
     }
-  }, [files, loadKiroUsageLimits]);
+  }, [files, loadKiroUsageLimits, loadCodexUsage]);
 
   // 提取所有存在的类型
   const existingTypes = useMemo(() => {
@@ -960,6 +982,77 @@ export function AuthFilesPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Codex 额度显示 */}
+        {item.type === 'codex' && codexUsage[item.name] && (
+          <div className={styles.quotaInfo}>
+            <div className={styles.quotaTitle}>
+              Codex 额度 {codexUsage[item.name].email && `(${codexUsage[item.name].email})`}
+            </div>
+            {codexUsage[item.name].plan && (
+              <div className={styles.quotaItem} style={{ marginBottom: '12px' }}>
+                <div className={styles.quotaHeader}>
+                  <span className={styles.quotaModel}>📋 订阅计划</span>
+                  <span className={styles.quotaValue}>{codexUsage[item.name].plan}</span>
+                </div>
+              </div>
+            )}
+            {/* 5小时窗口 */}
+            {codexUsage[item.name].session_window && (() => {
+              const window = codexUsage[item.name].session_window;
+              const usedPercent = window.limit > 0 ? Math.min((window.used / window.limit) * 100, 100) : 0;
+              const remainingPercent = 100 - usedPercent;
+              const progressClass = remainingPercent >= 70 ? styles.progressNormal : (remainingPercent >= 30 ? styles.progressWarning : styles.progressDanger);
+              const resetCountdown = window.reset_time ? formatTimeUntilReset(window.reset_time, currentTime) : null;
+
+              return (
+                <div className={styles.quotaItem}>
+                  <div className={styles.quotaHeader}>
+                    <span className={styles.quotaModel}>⏱️ 5小时窗口</span>
+                    <span className={styles.quotaValue}>
+                      {window.used}/{window.limit} (剩余: {window.remaining})
+                    </span>
+                  </div>
+                  <div className={`${styles.progressBar} ${progressClass}`}>
+                    <div className={styles.progressFill} style={{ width: `${remainingPercent}%` }}></div>
+                  </div>
+                  {resetCountdown && (
+                    <div className={styles.quotaReset}>
+                      重置时间: {resetCountdown}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            {/* 每周窗口 */}
+            {codexUsage[item.name].weekly_window && (() => {
+              const window = codexUsage[item.name].weekly_window;
+              const usedPercent = window.limit > 0 ? Math.min((window.used / window.limit) * 100, 100) : 0;
+              const remainingPercent = 100 - usedPercent;
+              const progressClass = remainingPercent >= 70 ? styles.progressNormal : (remainingPercent >= 30 ? styles.progressWarning : styles.progressDanger);
+              const resetCountdown = window.reset_time ? formatTimeUntilReset(window.reset_time, currentTime) : null;
+
+              return (
+                <div className={styles.quotaItem} style={{ marginTop: '8px' }}>
+                  <div className={styles.quotaHeader}>
+                    <span className={styles.quotaModel}>📅 每周窗口</span>
+                    <span className={styles.quotaValue}>
+                      {window.used}/{window.limit} (剩余: {window.remaining})
+                    </span>
+                  </div>
+                  <div className={`${styles.progressBar} ${progressClass}`}>
+                    <div className={styles.progressFill} style={{ width: `${remainingPercent}%` }}></div>
+                  </div>
+                  {resetCountdown && (
+                    <div className={styles.quotaReset}>
+                      重置时间: {resetCountdown}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 

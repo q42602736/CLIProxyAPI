@@ -110,7 +110,7 @@ var __yieldStar = (value) => {
 };
 var __forAwait = (obj, it, method) => (it = obj[__knownSymbol("asyncIterator")]) ? it.call(obj) : (obj = obj[__knownSymbol("iterator")](), it = {}, method = (key, fn) => (fn = obj[key]) && (it[key] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it);
 var require_index_001 = __commonJS({
-  "index-Jq9erqVG.js"(exports) {
+  "index-BwlNELTI.js"(exports) {
     var _Aa;
     (function polyfill() {
       const relList = document.createElement("link").relList;
@@ -22056,6 +22056,17 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
             return null;
           }
         });
+      },
+      // 获取 Codex 认证文件的额度信息
+      getCodexUsage(name2) {
+        return __async(this, null, function* () {
+          try {
+            const data = yield apiClient.get(`/codex-usage?name=${encodeURIComponent(name2)}`);
+            return data;
+          } catch (e) {
+            return null;
+          }
+        });
       }
     };
     const WEBUI_SUPPORTED = ["codex", "anthropic", "antigravity", "gemini-cli", "iflow"];
@@ -25572,6 +25583,7 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
       const [deletingAll, setDeletingAll] = reactExports.useState(false);
       const [keyStats, setKeyStats] = reactExports.useState({ bySource: {}, byAuthIndex: {} });
       const [antigravityQuotas, setAntigravityQuotas] = reactExports.useState({});
+      const [codexUsage, setCodexUsage] = reactExports.useState({});
       const [kiroUsageLimits, setKiroUsageLimits] = reactExports.useState({});
       const [quotaRefreshInterval, setQuotaRefreshInterval] = reactExports.useState(() => {
         const saved2 = localStorage.getItem("quotaRefreshInterval");
@@ -25645,6 +25657,21 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
         }
         setKiroUsageLimits(newLimits);
       }), []);
+      const loadCodexUsage = reactExports.useCallback((fileList) => __async(null, null, function* () {
+        const codexFiles = fileList.filter((f) => f.type === "codex");
+        if (codexFiles.length === 0) return;
+        const newUsage = {};
+        for (const file of codexFiles) {
+          try {
+            const usage = yield authFilesApi.getCodexUsage(file.name);
+            if (usage) {
+              newUsage[file.name] = usage;
+            }
+          } catch (e) {
+          }
+        }
+        setCodexUsage(newUsage);
+      }), []);
       const loadExcluded = reactExports.useCallback(() => __async(null, null, function* () {
         try {
           const res = yield authFilesApi.getOauthExcludedModels();
@@ -25680,6 +25707,7 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
           authFilesApi.list().then((data) => {
             if (data == null ? void 0 : data.files) {
               loadKiroUsageLimits(data.files);
+              loadCodexUsage(data.files);
             }
           }).catch(() => {
           });
@@ -25692,12 +25720,13 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
           clearInterval(quotaRefreshIntervalId);
           clearInterval(timeUpdateIntervalId);
         };
-      }, [loadFiles, loadKeyStats, loadExcluded, loadAntigravityQuotas, quotaRefreshInterval, loadKiroUsageLimits]);
+      }, [loadFiles, loadKeyStats, loadExcluded, loadAntigravityQuotas, quotaRefreshInterval, loadKiroUsageLimits, loadCodexUsage]);
       reactExports.useEffect(() => {
         if (files.length > 0) {
           loadKiroUsageLimits(files);
+          loadCodexUsage(files);
         }
-      }, [files, loadKiroUsageLimits]);
+      }, [files, loadKiroUsageLimits, loadCodexUsage]);
       const existingTypes = reactExports.useMemo(() => {
         const types2 = /* @__PURE__ */ new Set(["all"]);
         files.forEach((file) => {
@@ -26190,6 +26219,66 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
                 })
               ] }, idx);
             })
+          ] }),
+          item.type === "codex" && codexUsage[item.name] && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.quotaInfo, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.quotaTitle, children: [
+              "Codex 额度 ",
+              codexUsage[item.name].email && `(${codexUsage[item.name].email})`
+            ] }),
+            codexUsage[item.name].plan && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.quotaItem, style: { marginBottom: "12px" }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.quotaHeader, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.quotaModel, children: "📋 订阅计划" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.quotaValue, children: codexUsage[item.name].plan })
+            ] }) }),
+            codexUsage[item.name].session_window && (() => {
+              const window2 = codexUsage[item.name].session_window;
+              const usedPercent = window2.limit > 0 ? Math.min(window2.used / window2.limit * 100, 100) : 0;
+              const remainingPercent = 100 - usedPercent;
+              const progressClass = remainingPercent >= 70 ? styles$5.progressNormal : remainingPercent >= 30 ? styles$5.progressWarning : styles$5.progressDanger;
+              const resetCountdown = window2.reset_time ? formatTimeUntilReset(window2.reset_time, currentTime) : null;
+              return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.quotaItem, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.quotaHeader, children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.quotaModel, children: "⏱️ 5小时窗口" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$5.quotaValue, children: [
+                    window2.used,
+                    "/",
+                    window2.limit,
+                    " (剩余: ",
+                    window2.remaining,
+                    ")"
+                  ] })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `${styles$5.progressBar} ${progressClass}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.progressFill, style: { width: `${remainingPercent}%` } }) }),
+                resetCountdown && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.quotaReset, children: [
+                  "重置时间: ",
+                  resetCountdown
+                ] })
+              ] });
+            })(),
+            codexUsage[item.name].weekly_window && (() => {
+              const window2 = codexUsage[item.name].weekly_window;
+              const usedPercent = window2.limit > 0 ? Math.min(window2.used / window2.limit * 100, 100) : 0;
+              const remainingPercent = 100 - usedPercent;
+              const progressClass = remainingPercent >= 70 ? styles$5.progressNormal : remainingPercent >= 30 ? styles$5.progressWarning : styles$5.progressDanger;
+              const resetCountdown = window2.reset_time ? formatTimeUntilReset(window2.reset_time, currentTime) : null;
+              return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.quotaItem, style: { marginTop: "8px" }, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.quotaHeader, children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: styles$5.quotaModel, children: "📅 每周窗口" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: styles$5.quotaValue, children: [
+                    window2.used,
+                    "/",
+                    window2.limit,
+                    " (剩余: ",
+                    window2.remaining,
+                    ")"
+                  ] })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `${styles$5.progressBar} ${progressClass}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.progressFill, style: { width: `${remainingPercent}%` } }) }),
+                resetCountdown && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: styles$5.quotaReset, children: [
+                  "重置时间: ",
+                  resetCountdown
+                ] })
+              ] });
+            })()
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.cardActions, children: isRuntimeOnly ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: styles$5.virtualBadge, children: t2("auth_files.type_virtual") || "虚拟认证文件" }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -65994,7 +66083,7 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
                 t2("footer.version"),
                 ": ",
-                "v6.6.40-20-ge90b7cb"
+                "v6.6.69-48-g1822805"
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
                 t2("footer.build_date"),

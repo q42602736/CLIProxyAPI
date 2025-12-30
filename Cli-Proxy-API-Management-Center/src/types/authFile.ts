@@ -32,3 +32,26 @@ export interface AuthFilesResponse {
   files: AuthFileItem[];
   total?: number;
 }
+
+export interface CodexUsageWindow {
+  used: number;
+  limit: number;
+  remaining: number;
+  reset_time: string;
+  reset_in: number;
+}
+
+export interface CodexCredits {
+  balance: number;
+  has_credits: boolean;
+  unlimited: boolean;
+}
+
+export interface CodexUsageResponse {
+  email: string;
+  plan: string;
+  session_window: CodexUsageWindow;
+  weekly_window: CodexUsageWindow;
+  credits: CodexCredits;
+  updated_at: string;
+}

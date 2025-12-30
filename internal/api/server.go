@@ -587,6 +587,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/auth-files/models", s.mgmt.GetAuthFileModels)
 		mgmt.GET("/auth-files/download", s.mgmt.DownloadAuthFile)
 		mgmt.GET("/antigravity-quotas", s.mgmt.GetAntigravityQuotas)
+		mgmt.GET("/codex-usage", s.mgmt.GetCodexUsage)
 		mgmt.POST("/auth-files", s.mgmt.UploadAuthFile)
 		mgmt.PATCH("/auth-files", s.mgmt.UpdateAuthFile)
 		mgmt.DELETE("/auth-files", s.mgmt.DeleteAuthFile)
