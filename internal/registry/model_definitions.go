@@ -864,3 +864,29 @@ func GetKiroModels() []*ModelInfo {
 		},
 	}
 }
+
+// LookupStaticModelInfo searches all static model definitions for a model by ID.
+// Returns nil if no matching model is found.
+func LookupStaticModelInfo(modelID string) *ModelInfo {
+	if modelID == "" {
+		return nil
+	}
+	allModels := [][]*ModelInfo{
+		GetClaudeModels(),
+		GetGeminiModels(),
+		GetGeminiVertexModels(),
+		GetGeminiCLIModels(),
+		GetAIStudioModels(),
+		GetOpenAIModels(),
+		GetQwenModels(),
+		GetIFlowModels(),
+	}
+	for _, models := range allModels {
+		for _, m := range models {
+			if m != nil && m.ID == modelID {
+				return m
+			}
+		}
+	}
+	return nil
+}
