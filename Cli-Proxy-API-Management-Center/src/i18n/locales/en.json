@@ -505,7 +505,21 @@
     "kiro_result_title": "Kiro Credential Load Result",
     "kiro_result_region": "Region",
     "kiro_result_path": "Saved Path",
-    "kiro_result_type": "Type"
+    "kiro_result_type": "Type",
+    "kiro_import_title": "Kiro Account Import",
+    "kiro_import_button": "Import Account",
+    "kiro_import_hint": "Paste JSON data exported from kiro-account-manager to automatically convert and import Kiro account.",
+    "kiro_import_json_label": "JSON Data:",
+    "kiro_import_json_placeholder": "{\n  \"email\": \"user@example.com\",\n  \"provider\": \"BuilderId\",\n  \"accessToken\": \"...\",\n  \"refreshToken\": \"...\",\n  \"clientId\": \"...\",\n  \"clientSecret\": \"...\",\n  \"region\": \"us-east-1\"\n}",
+    "kiro_import_json_required": "Please paste JSON data first",
+    "kiro_import_json_invalid": "Invalid JSON format, please check and try again",
+    "kiro_import_status_success": "Kiro account imported successfully",
+    "kiro_import_status_error": "Kiro account import failed:",
+    "kiro_import_status_duplicate": "Config file duplicate:",
+    "kiro_import_start_error": "Failed to import Kiro account:",
+    "kiro_import_config_duplicate": "A config file already exists (duplicate). Remove the existing file and try again if you want to re-save it.",
+    "kiro_import_result_title": "Kiro Account Import Result",
+    "kiro_import_result_auth_method": "Auth Method"
   },
   "usage_stats": {
     "title": "Usage Statistics",

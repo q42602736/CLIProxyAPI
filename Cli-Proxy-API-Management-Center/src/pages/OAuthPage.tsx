@@ -4,7 +4,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useNotificationStore } from '@/stores';
-import { oauthApi, type OAuthProvider, type IFlowCookieAuthResponse, type KiroCredentialAuthResponse } from '@/services/api/oauth';
+import { oauthApi, type OAuthProvider, type IFlowCookieAuthResponse, type KiroCredentialAuthResponse, type KiroImportResponse } from '@/services/api/oauth';
 import styles from './OAuthPage.module.scss';
 
 interface ProviderState {
@@ -38,6 +38,14 @@ interface KiroCredState {
   errorType?: 'error' | 'warning';
 }
 
+interface KiroImportState {
+  jsonText: string;
+  loading: boolean;
+  result?: KiroImportResponse;
+  error?: string;
+  errorType?: 'error' | 'warning';
+}
+
 const PROVIDERS: { id: OAuthProvider; titleKey: string; hintKey: string; urlLabelKey: string }[] = [
   { id: 'codex', titleKey: 'auth_login.codex_oauth_title', hintKey: 'auth_login.codex_oauth_hint', urlLabelKey: 'auth_login.codex_oauth_url_label' },
   { id: 'anthropic', titleKey: 'auth_login.anthropic_oauth_title', hintKey: 'auth_login.anthropic_oauth_hint', urlLabelKey: 'auth_login.anthropic_oauth_url_label' },
@@ -55,6 +63,7 @@ export function OAuthPage() {
   const [states, setStates] = useState<Record<OAuthProvider, ProviderState>>({} as Record<OAuthProvider, ProviderState>);
   const [iflowCookie, setIflowCookie] = useState<IFlowCookieState>({ cookie: '', loading: false });
   const [kiroCred, setKiroCred] = useState<KiroCredState>({ credPath: '', loading: false, uploading: false });
+  const [kiroImport, setKiroImport] = useState<KiroImportState>({ jsonText: '', loading: false });
   const timers = useRef<Record<string, number>>({});
 
   useEffect(() => {
@@ -283,6 +292,52 @@ export function OAuthPage() {
     event.target.value = '';
   };
 
+  const submitKiroImport = async () => {
+    const jsonText = kiroImport.jsonText.trim();
+    if (!jsonText) {
+      showNotification(t('auth_login.kiro_import_json_required'), 'warning');
+      return;
+    }
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(jsonText);
+    } catch {
+      showNotification(t('auth_login.kiro_import_json_invalid'), 'error');
+      return;
+    }
+    setKiroImport((prev) => ({
+      ...prev,
+      loading: true,
+      error: undefined,
+      errorType: undefined,
+      result: undefined
+    }));
+    try {
+      const res = await oauthApi.kiroImportAccount(data);
+      if (res.status === 'ok') {
+        setKiroImport((prev) => ({ ...prev, loading: false, result: res, jsonText: '' }));
+        showNotification(t('auth_login.kiro_import_status_success'), 'success');
+      } else {
+        setKiroImport((prev) => ({
+          ...prev,
+          loading: false,
+          error: res.error,
+          errorType: 'error'
+        }));
+        showNotification(`${t('auth_login.kiro_import_status_error')} ${res.error || ''}`, 'error');
+      }
+    } catch (err: any) {
+      if (err?.status === 409) {
+        const message = t('auth_login.kiro_import_config_duplicate');
+        setKiroImport((prev) => ({ ...prev, loading: false, error: message, errorType: 'warning' }));
+        showNotification(message, 'warning');
+        return;
+      }
+      setKiroImport((prev) => ({ ...prev, loading: false, error: err?.message, errorType: 'error' }));
+      showNotification(`${t('auth_login.kiro_import_start_error')} ${err?.message || ''}`, 'error');
+    }
+  };
+
   return (
     <div className={styles.container}>
       <h1 className={styles.pageTitle}>{t('nav.oauth', { defaultValue: 'OAuth' })}</h1>
@@ -461,6 +516,65 @@ export function OAuthPage() {
                   <div className="key-value-item">
                     <span className="key">{t('auth_login.kiro_result_type')}</span>
                     <span className="value">{kiroCred.result.type}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </Card>
+
+        {/* Kiro 账号导入 (kiro-account-manager) */}
+        <Card
+          title={t('auth_login.kiro_import_title')}
+          extra={
+            <Button onClick={submitKiroImport} loading={kiroImport.loading}>
+              {t('auth_login.kiro_import_button')}
+            </Button>
+          }
+        >
+          <div className="hint">{t('auth_login.kiro_import_hint')}</div>
+          <div className="form-item" style={{ marginTop: 12 }}>
+            <label className="label">{t('auth_login.kiro_import_json_label')}</label>
+            <textarea
+              className="textarea"
+              value={kiroImport.jsonText}
+              onChange={(e) => setKiroImport((prev) => ({ ...prev, jsonText: e.target.value }))}
+              placeholder={t('auth_login.kiro_import_json_placeholder')}
+              rows={6}
+              style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }}
+            />
+          </div>
+          {kiroImport.error && (
+            <div
+              className={`status-badge ${kiroImport.errorType === 'warning' ? 'warning' : 'error'}`}
+              style={{ marginTop: 8 }}
+            >
+              {kiroImport.errorType === 'warning'
+                ? t('auth_login.kiro_import_status_duplicate')
+                : t('auth_login.kiro_import_status_error')}{' '}
+              {kiroImport.error}
+            </div>
+          )}
+          {kiroImport.result && kiroImport.result.status === 'ok' && (
+            <div className="connection-box" style={{ marginTop: 12 }}>
+              <div className="label">{t('auth_login.kiro_import_result_title')}</div>
+              <div className="key-value-list">
+                {kiroImport.result.region && (
+                  <div className="key-value-item">
+                    <span className="key">{t('auth_login.kiro_result_region')}</span>
+                    <span className="value">{kiroImport.result.region}</span>
+                  </div>
+                )}
+                {kiroImport.result.auth_method && (
+                  <div className="key-value-item">
+                    <span className="key">{t('auth_login.kiro_import_result_auth_method')}</span>
+                    <span className="value">{kiroImport.result.auth_method}</span>
+                  </div>
+                )}
+                {kiroImport.result.saved_path && (
+                  <div className="key-value-item">
+                    <span className="key">{t('auth_login.kiro_result_path')}</span>
+                    <span className="value">{kiroImport.result.saved_path}</span>
                   </div>
                 )}
               </div>

@@ -175,10 +175,21 @@ func (k *KiroAuth) LoadCredentialsFromDirectory(credPath string) (*KiroTokenData
 }
 
 // loadCredentialsFromFile is a private helper that loads credentials from a single file.
+// It automatically detects and converts kiro-account-manager export format.
 func (k *KiroAuth) loadCredentialsFromFile(filePath string) (*KiroTokenData, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read credentials file: %w", err)
+	}
+
+	// Check if this is kiro-account-manager export format
+	if isKiroAccountManagerFormat(data) {
+		storage, err := convertFromKiroAccountManager(data)
+		if err != nil {
+			return nil, err
+		}
+		log.Debugf("[Kiro Auth] Loaded kiro-account-manager format credentials from file: %s", filePath)
+		return storage.ToTokenData(), nil
 	}
 
 	var creds KiroTokenData

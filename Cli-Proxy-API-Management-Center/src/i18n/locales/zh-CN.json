@@ -505,7 +505,21 @@
     "kiro_result_title": "Kiro 凭证加载结果",
     "kiro_result_region": "区域",
     "kiro_result_path": "保存路径",
-    "kiro_result_type": "类型"
+    "kiro_result_type": "类型",
+    "kiro_import_title": "Kiro 账号导入",
+    "kiro_import_button": "导入账号",
+    "kiro_import_hint": "粘贴 kiro-account-manager 导出的 JSON 数据，自动转换并导入 Kiro 账号。",
+    "kiro_import_json_label": "JSON 数据:",
+    "kiro_import_json_placeholder": "{\n  \"email\": \"user@example.com\",\n  \"provider\": \"BuilderId\",\n  \"accessToken\": \"...\",\n  \"refreshToken\": \"...\",\n  \"clientId\": \"...\",\n  \"clientSecret\": \"...\",\n  \"region\": \"us-east-1\"\n}",
+    "kiro_import_json_required": "请先粘贴 JSON 数据",
+    "kiro_import_json_invalid": "JSON 格式无效，请检查后重试",
+    "kiro_import_status_success": "Kiro 账号导入成功",
+    "kiro_import_status_error": "Kiro 账号导入失败:",
+    "kiro_import_status_duplicate": "配置文件重复:",
+    "kiro_import_start_error": "导入 Kiro 账号失败:",
+    "kiro_import_config_duplicate": "检测到配置文件已存在（重复），如需重新保存请先删除原文件后重试。",
+    "kiro_import_result_title": "Kiro 账号导入结果",
+    "kiro_import_result_auth_method": "认证方式"
   },
   "usage_stats": {
     "title": "使用统计",

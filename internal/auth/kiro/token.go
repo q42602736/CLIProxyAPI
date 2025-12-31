@@ -82,7 +82,73 @@ func (ts *KiroTokenStorage) SaveTokenToFile(authFilePath string) error {
 	return nil
 }
 
+// kiroAccountManagerExport represents the JSON format exported by kiro-account-manager.
+// This struct is used to detect and convert the external format to our internal format.
+type kiroAccountManagerExport struct {
+	Email        string `json:"email,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ClientIDHash string `json:"clientIdHash,omitempty"`
+	ClientID     string `json:"clientId,omitempty"`
+	ClientSecret string `json:"clientSecret,omitempty"`
+	Region       string `json:"region,omitempty"`
+	Label        string `json:"label,omitempty"`
+	MachineID    string `json:"machineId,omitempty"`
+}
+
+// isKiroAccountManagerFormat checks if the JSON data is from kiro-account-manager export.
+// It detects the format by checking for kiro-account-manager specific fields.
+func isKiroAccountManagerFormat(data []byte) bool {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	// kiro-account-manager exports have "provider" field (Google/GitHub/BuilderId)
+	// and may have "clientIdHash", "label", "machineId" fields
+	_, hasProvider := raw["provider"]
+	_, hasClientIdHash := raw["clientIdHash"]
+	_, hasLabel := raw["label"]
+	_, hasMachineId := raw["machineId"]
+	// Must have provider and at least one of the kiro-account-manager specific fields
+	return hasProvider && (hasClientIdHash || hasLabel || hasMachineId)
+}
+
+// convertFromKiroAccountManager converts kiro-account-manager export format to KiroTokenStorage.
+func convertFromKiroAccountManager(data []byte) (*KiroTokenStorage, error) {
+	var export kiroAccountManagerExport
+	if err := json.Unmarshal(data, &export); err != nil {
+		return nil, fmt.Errorf("failed to parse kiro-account-manager format: %w", err)
+	}
+
+	// Determine auth method based on provider
+	authMethod := "idc" // default to idc
+	if export.Provider == "Google" || export.Provider == "GitHub" || export.Provider == "Github" {
+		authMethod = "social"
+	}
+
+	// For social auth, clientId and clientSecret are not needed
+	// For idc auth (BuilderId/Enterprise), they are required
+	storage := &KiroTokenStorage{
+		AccessToken:  export.AccessToken,
+		RefreshToken: export.RefreshToken,
+		ClientID:     export.ClientID,
+		ClientSecret: export.ClientSecret,
+		AuthMethod:   authMethod,
+		Region:       export.Region,
+		Type:         "kiro",
+	}
+
+	// Set default region if not specified
+	if storage.Region == "" {
+		storage.Region = "us-east-1"
+	}
+
+	return storage, nil
+}
+
 // LoadTokenFromFile loads Kiro token storage from a JSON file.
+// It automatically detects and converts kiro-account-manager export format.
 //
 // Parameters:
 //   - authFilePath: The full path to the token file
@@ -94,6 +160,11 @@ func LoadTokenFromFile(authFilePath string) (*KiroTokenStorage, error) {
 	data, err := os.ReadFile(authFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read token file: %w", err)
+	}
+
+	// Check if this is kiro-account-manager export format
+	if isKiroAccountManagerFormat(data) {
+		return convertFromKiroAccountManager(data)
 	}
 
 	var storage KiroTokenStorage

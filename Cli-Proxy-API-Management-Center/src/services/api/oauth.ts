@@ -39,6 +39,14 @@ export interface KiroCredentialAuthResponse {
   type?: string;
 }
 
+export interface KiroImportResponse {
+  status: 'ok' | 'error';
+  error?: string;
+  saved_path?: string;
+  region?: string;
+  auth_method?: string;
+}
+
 export interface KiroFileUploadResponse {
   status: 'ok' | 'error';
   error?: string;
@@ -110,5 +118,9 @@ export const oauthApi = {
 
   /** Kiro 用量查询 */
   kiroGetUsageLimits: (authId: string) =>
-    apiClient.get<KiroUsageLimitsResponse>('/kiro-usage-limits', { params: { auth_id: authId } })
+    apiClient.get<KiroUsageLimitsResponse>('/kiro-usage-limits', { params: { auth_id: authId } }),
+
+  /** Kiro 账号导入 (kiro-account-manager 格式) */
+  kiroImportAccount: (data: Record<string, unknown>) =>
+    apiClient.post<KiroImportResponse>('/kiro-import', data)
 };

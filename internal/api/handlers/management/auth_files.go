@@ -2649,6 +2649,120 @@ func (h *Handler) UploadOAuthCredentials(c *gin.Context) {
 	})
 }
 
+// ImportKiroAccount imports a Kiro account from kiro-account-manager export JSON format.
+// Users can directly paste the JSON exported from kiro-account-manager to add an account.
+func (h *Handler) ImportKiroAccount(c *gin.Context) {
+	var payload map[string]any
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid JSON payload"})
+		return
+	}
+
+	// Extract required fields
+	accessToken, _ := payload["accessToken"].(string)
+	refreshToken, _ := payload["refreshToken"].(string)
+
+	if accessToken == "" || refreshToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "accessToken and refreshToken are required"})
+		return
+	}
+
+	// Extract optional fields
+	provider, _ := payload["provider"].(string)
+	clientID, _ := payload["clientId"].(string)
+	clientSecret, _ := payload["clientSecret"].(string)
+	region, _ := payload["region"].(string)
+	email, _ := payload["email"].(string)
+	label, _ := payload["label"].(string)
+
+	// Determine auth method based on provider
+	authMethod := "idc" // default to idc
+	if provider == "Google" || provider == "GitHub" || provider == "Github" {
+		authMethod = "social"
+	}
+
+	// Set default region
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	// Create token storage
+	tokenStorage := &kiroauth.KiroTokenStorage{
+		Type:         "kiro",
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		AuthMethod:   authMethod,
+		Region:       region,
+		LastRefresh:  time.Now().Format(time.RFC3339),
+	}
+
+	// Generate filename
+	timestamp := time.Now().Unix()
+	var fileName string
+	if email != "" {
+		// Sanitize email for filename
+		safeEmail := strings.ReplaceAll(email, "@", "_")
+		safeEmail = strings.ReplaceAll(safeEmail, ".", "_")
+		fileName = fmt.Sprintf("kiro-%s-%d.json", safeEmail, timestamp)
+	} else {
+		fileName = fmt.Sprintf("kiro-%s-%d.json", region, timestamp)
+	}
+
+	// Build metadata
+	metadata := map[string]any{
+		"type":         "kiro",
+		"region":       region,
+		"auth_method":  authMethod,
+		"last_refresh": tokenStorage.LastRefresh,
+	}
+	if email != "" {
+		metadata["email"] = email
+	}
+	if provider != "" {
+		metadata["provider"] = provider
+	}
+
+	// Build label
+	recordLabel := label
+	if recordLabel == "" && email != "" {
+		recordLabel = email
+	}
+	if recordLabel == "" {
+		recordLabel = fmt.Sprintf("Kiro %s", region)
+	}
+
+	record := &coreauth.Auth{
+		ID:       fileName,
+		Provider: "kiro",
+		FileName: fileName,
+		Label:    recordLabel,
+		Storage:  tokenStorage,
+		Metadata: metadata,
+		Attributes: map[string]string{
+			"region": region,
+		},
+	}
+
+	savedPath, errSave := h.saveTokenRecord(context.Background(), record)
+	if errSave != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "failed to save Kiro credentials"})
+		return
+	}
+
+	fmt.Printf("Kiro account imported successfully. Token saved to %s\n", savedPath)
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "ok",
+		"saved_path":  savedPath,
+		"file_name":   fileName,
+		"region":      region,
+		"auth_method": authMethod,
+		"email":       email,
+		"type":        "kiro",
+	})
+}
+
 // updateKiroAuthFile updates the original Kiro auth file with refreshed token data
 func updateKiroAuthFile(filePath string, tokenData *kiroauth.KiroTokenData) error {
 	// Read existing file

@@ -47,7 +47,7 @@ GEMINI.md
 .bmad/*
 _bmad/*
 _bmad-output/*
-
+/kiro-account-manager/
 # macOS
 .DS_Store
 ._*
