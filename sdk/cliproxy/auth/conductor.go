@@ -401,7 +401,26 @@ func (m *Manager) executeWithProvider(ctx context.Context, provider string, req 
 	routeModel := req.Model
 	tried := make(map[string]struct{})
 	var lastErr error
+	maxAttempts := 100
+	attemptCount := 0
 	for {
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return cliproxyexecutor.Response{}, lastErr
+			}
+			return cliproxyexecutor.Response{}, ctx.Err()
+		default:
+		}
+		attemptCount++
+		if attemptCount > maxAttempts {
+			entry := logEntryWithRequestID(ctx)
+			entry.Warnf("exceeded max attempts (%d) for provider=%s model=%s, tried=%d auths", maxAttempts, provider, routeModel, len(tried))
+			if lastErr != nil {
+				return cliproxyexecutor.Response{}, lastErr
+			}
+			return cliproxyexecutor.Response{}, &Error{Code: "max_attempts_exceeded", Message: "exceeded maximum retry attempts"}
+		}
 		auth, executor, errPick := m.pickNext(ctx, provider, routeModel, opts, tried)
 		if errPick != nil {
 			if lastErr != nil {
@@ -463,7 +482,26 @@ func (m *Manager) executeCountWithProvider(ctx context.Context, provider string,
 	routeModel := req.Model
 	tried := make(map[string]struct{})
 	var lastErr error
+	maxAttempts := 100
+	attemptCount := 0
 	for {
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return cliproxyexecutor.Response{}, lastErr
+			}
+			return cliproxyexecutor.Response{}, ctx.Err()
+		default:
+		}
+		attemptCount++
+		if attemptCount > maxAttempts {
+			entry := logEntryWithRequestID(ctx)
+			entry.Warnf("exceeded max attempts (%d) for provider=%s model=%s, tried=%d auths", maxAttempts, provider, routeModel, len(tried))
+			if lastErr != nil {
+				return cliproxyexecutor.Response{}, lastErr
+			}
+			return cliproxyexecutor.Response{}, &Error{Code: "max_attempts_exceeded", Message: "exceeded maximum retry attempts"}
+		}
 		auth, executor, errPick := m.pickNext(ctx, provider, routeModel, opts, tried)
 		if errPick != nil {
 			if lastErr != nil {
@@ -525,7 +563,26 @@ func (m *Manager) executeStreamWithProvider(ctx context.Context, provider string
 	routeModel := req.Model
 	tried := make(map[string]struct{})
 	var lastErr error
+	maxAttempts := 100
+	attemptCount := 0
 	for {
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, ctx.Err()
+		default:
+		}
+		attemptCount++
+		if attemptCount > maxAttempts {
+			entry := logEntryWithRequestID(ctx)
+			entry.Warnf("exceeded max attempts (%d) for provider=%s model=%s, tried=%d auths", maxAttempts, provider, routeModel, len(tried))
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, &Error{Code: "max_attempts_exceeded", Message: "exceeded maximum retry attempts"}
+		}
 		auth, executor, errPick := m.pickNext(ctx, provider, routeModel, opts, tried)
 		if errPick != nil {
 			if lastErr != nil {
