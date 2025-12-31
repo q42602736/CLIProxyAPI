@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import {
   IconBot,
   IconChartLine,
+  IconDiamond,
   IconFileText,
   IconInfo,
   IconKey,
@@ -24,6 +25,7 @@ const sidebarIcons: Record<string, ReactNode> = {
   authFiles: <IconFileText size={18} />,
   oauth: <IconShield size={18} />,
   usage: <IconChartLine size={18} />,
+  quota: <IconDiamond size={18} />,
   config: <IconSettings size={18} />,
   logs: <IconScrollText size={18} />,
   system: <IconInfo size={18} />
@@ -148,7 +150,7 @@ export function MainLayout() {
   const clearCache = useConfigStore((state) => state.clearCache);
 
   const theme = useThemeStore((state) => state.theme);
-  const toggleTheme = useThemeStore((state) => state.toggleTheme);
+  const cycleTheme = useThemeStore((state) => state.cycleTheme);
   const toggleLanguage = useLanguageStore((state) => state.toggleLanguage);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -236,6 +238,7 @@ export function MainLayout() {
     { path: '/auth-files', label: t('nav.auth_files'), icon: sidebarIcons.authFiles },
     { path: '/oauth', label: t('nav.oauth', { defaultValue: 'OAuth' }), icon: sidebarIcons.oauth },
     { path: '/usage', label: t('nav.usage_stats'), icon: sidebarIcons.usage },
+    { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },
     { path: '/config', label: t('nav.config_management'), icon: sidebarIcons.config },
     ...(config?.loggingToFile ? [{ path: '/logs', label: t('nav.logs'), icon: sidebarIcons.logs }] : []),
     { path: '/system', label: t('nav.system_info'), icon: sidebarIcons.system }
@@ -329,7 +332,7 @@ export function MainLayout() {
             <Button variant="ghost" size="sm" onClick={toggleLanguage} title={t('language.switch')}>
               {headerIcons.language}
             </Button>
-            <Button variant="ghost" size="sm" onClick={toggleTheme} title={t('theme.switch')}>
+            <Button variant="ghost" size="sm" onClick={cycleTheme} title={t('theme.switch')}>
               {theme === 'dark' ? headerIcons.sun : headerIcons.moon}
             </Button>
             <Button variant="ghost" size="sm" onClick={logout} title={t('header.logout')}>
